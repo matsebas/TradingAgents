@@ -114,12 +114,31 @@ pip install -r requirements.txt
 
 ### Required APIs
 
-You will need the OpenAI API for all the agents, and [Alpha Vantage API](https://www.alphavantage.co/support/#api-key) for fundamental and news data (default configuration).
+**✅ Default Configuration: Google Gemini (Recommended)**
+
+The project is now configured to use **Google Gemini** as the primary LLM and data vendor. You only need one API key:
+
+```bash
+export GEMINI_API_KEY=$YOUR_GEMINI_API_KEY
+export GOOGLE_API_KEY=$YOUR_GEMINI_API_KEY  # Same key
+```
+
+Get your free Gemini API key at [Google AI Studio](https://aistudio.google.com/).
+
+📚 **Complete setup guide:** [GEMINI_SETUP.md](GEMINI_SETUP.md)
+
+**Alternative: OpenAI + Alpha Vantage**
+
+You can also use OpenAI API for all the agents, and [Alpha Vantage API](https://www.alphavantage.co/support/#api-key) for fundamental and news data.
 
 ```bash
 export OPENAI_API_KEY=$YOUR_OPENAI_API_KEY
 export ALPHA_VANTAGE_API_KEY=$YOUR_ALPHA_VANTAGE_API_KEY
 ```
+
+Then modify `llm_provider` in `tradingagents/default_config.py` to `"openai"`.
+
+**Using .env file:**
 
 Alternatively, you can create a `.env` file in the project root with your API keys (see `.env.example` for reference):
 ```bash
@@ -127,7 +146,7 @@ cp .env.example .env
 # Edit .env with your actual API keys
 ```
 
-**Note:** We are happy to partner with Alpha Vantage to provide robust API support for TradingAgents. You can get a free AlphaVantage API [here](https://www.alphavantage.co/support/#api-key), TradingAgents-sourced requests also have increased rate limits to 60 requests per minute with no daily limits. Typically the quota is sufficient for performing complex tasks with TradingAgents thanks to Alpha Vantage’s open-source support program. If you prefer to use OpenAI for these data sources instead, you can modify the data vendor settings in `tradingagents/default_config.py`.
+**Note:** We are happy to partner with Alpha Vantage to provide robust API support for TradingAgents. You can get a free AlphaVantage API [here](https://www.alphavantage.co/support/#api-key), TradingAgents-sourced requests also have increased rate limits to 60 requests per minute with no daily limits. Typically the quota is sufficient for performing complex tasks with TradingAgents thanks to Alpha Vantage's open-source support program.
 
 ### CLI Usage
 

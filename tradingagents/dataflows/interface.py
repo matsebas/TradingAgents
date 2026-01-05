@@ -5,6 +5,7 @@ from .local import get_YFin_data, get_finnhub_news, get_finnhub_company_insider_
 from .y_finance import get_YFin_data_online, get_stock_stats_indicators_window, get_balance_sheet as get_yfinance_balance_sheet, get_cashflow as get_yfinance_cashflow, get_income_statement as get_yfinance_income_statement, get_insider_transactions as get_yfinance_insider_transactions
 from .google import get_google_news
 from .openai import get_stock_news_openai, get_global_news_openai, get_fundamentals_openai
+from .gemini import get_stock_news_gemini, get_global_news_gemini, get_fundamentals_gemini
 from .alpha_vantage import (
     get_stock as get_alpha_vantage_stock,
     get_indicator as get_alpha_vantage_indicator,
@@ -58,7 +59,8 @@ VENDOR_LIST = [
     "local",
     "yfinance",
     "openai",
-    "google"
+    "google",
+    "gemini"
 ]
 
 # Mapping of methods to their vendor-specific implementations
@@ -79,6 +81,7 @@ VENDOR_METHODS = {
     "get_fundamentals": {
         "alpha_vantage": get_alpha_vantage_fundamentals,
         "openai": get_fundamentals_openai,
+        "gemini": get_fundamentals_gemini,
     },
     "get_balance_sheet": {
         "alpha_vantage": get_alpha_vantage_balance_sheet,
@@ -100,10 +103,12 @@ VENDOR_METHODS = {
         "alpha_vantage": get_alpha_vantage_news,
         "openai": get_stock_news_openai,
         "google": get_google_news,
+        "gemini": get_stock_news_gemini,
         "local": [get_finnhub_news, get_reddit_company_news, get_google_news],
     },
     "get_global_news": {
         "openai": get_global_news_openai,
+        "gemini": get_global_news_gemini,
         "local": get_reddit_global_news
     },
     "get_insider_sentiment": {

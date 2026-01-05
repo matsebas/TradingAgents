@@ -20,4 +20,8 @@ def get_indicators(
     Returns:
         str: A formatted dataframe containing the technical indicators for the specified ticker symbol and indicator.
     """
-    return route_to_vendor("get_indicators", symbol, indicator, curr_date, look_back_days)
+    try:
+        return route_to_vendor("get_indicators", symbol, indicator, curr_date, look_back_days)
+    except Exception as e:
+        print(f"DEBUG: Error detallado en get_indicators: {str(e)}")
+        raise e

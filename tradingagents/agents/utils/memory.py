@@ -1,25 +1,64 @@
 import chromadb
 from chromadb.config import Settings
 from openai import OpenAI
+import os
 
 
 class FinancialSituationMemory:
     def __init__(self, name, config):
-        if config["backend_url"] == "http://localhost:11434/v1":
-            self.embedding = "nomic-embed-text"
+        self.config = config
+        self.llm_provider = config.get("llm_provider", "openai").lower()
+
+        # Configure embedding based on provider
+        if self.llm_provider == "google":
+            # Use Google Gemini for embeddings
+            try:
+                from google import genai
+                self.client_type = "google"
+                api_key = config.get("gemini_api_key") or os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
+                if not api_key:
+                    raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable must be set for Google embeddings")
+                self.client = genai.Client(api_key=api_key)
+                self.embedding = "text-embedding-004"  # Google's embedding model
+            except ImportError:
+                print("Warning: google.genai not available, falling back to OpenAI")
+                self.client_type = "openai"
+                self.embedding = "text-embedding-3-small"
+                self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
         else:
-            self.embedding = "text-embedding-3-small"
-        self.client = OpenAI(base_url=config["backend_url"])
+            # Use OpenAI or compatible API
+            self.client_type = "openai"
+            if config["backend_url"] == "http://localhost:11434/v1":
+                self.embedding = "nomic-embed-text"
+            else:
+                self.embedding = "text-embedding-3-small"
+
+            # Only create OpenAI client if we have an API key
+            api_key = os.getenv("OPENAI_API_KEY")
+            if api_key:
+                self.client = OpenAI(base_url=config["backend_url"], api_key=api_key)
+            else:
+                self.client = OpenAI(base_url=config["backend_url"])
+
         self.chroma_client = chromadb.Client(Settings(allow_reset=True))
         self.situation_collection = self.chroma_client.create_collection(name=name)
 
     def get_embedding(self, text):
-        """Get OpenAI embedding for a text"""
-        
-        response = self.client.embeddings.create(
-            model=self.embedding, input=text
-        )
-        return response.data[0].embedding
+        """Get embedding for a text from configured provider"""
+
+        if self.client_type == "google":
+            # Use Google Gemini embeddings
+            response = self.client.models.embed_content(
+                model=self.embedding,
+                contents=text
+            )
+            return response.embeddings[0].values
+        else:
+            # Use OpenAI embeddings
+            response = self.client.embeddings.create(
+                model=self.embedding, input=text
+            )
+            return response.data[0].embedding
 
     def add_situations(self, situations_and_advice):
         """Add financial situations and their corresponding advice. Parameter is a list of tuples (situation, rec)"""

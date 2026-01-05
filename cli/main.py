@@ -90,6 +90,17 @@ class MessageBuffer:
 
     def update_report_section(self, section_name, content):
         if section_name in self.report_sections:
+            # Handle Gemini message format (list of dicts with 'type' and 'text')
+            if isinstance(content, list):
+                # Extract text from Gemini format
+                text_parts = []
+                for item in content:
+                    if isinstance(item, dict) and 'text' in item:
+                        text_parts.append(item['text'])
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                content = '\n\n'.join(text_parts) if text_parts else content
+
             self.report_sections[section_name] = content
             self._update_current_report()
 
@@ -177,15 +188,15 @@ message_buffer = MessageBuffer()
 def create_layout():
     layout = Layout()
     layout.split_column(
-        Layout(name="header", size=3),
+        Layout(name="header", size=4),  # Increased from 3 to 4 to ensure enough space
         Layout(name="main"),
         Layout(name="footer", size=3),
     )
     layout["main"].split_column(
-        Layout(name="upper", ratio=3), Layout(name="analysis", ratio=5)
+        Layout(name="upper", size=18), Layout(name="analysis")  # Reduced to 18 to give more space to analysis
     )
     layout["upper"].split_row(
-        Layout(name="progress", ratio=2), Layout(name="messages", ratio=3)
+        Layout(name="progress"), Layout(name="messages")
     )
     return layout
 
@@ -194,12 +205,9 @@ def update_display(layout, spinner_text=None):
     # Header with welcome message
     layout["header"].update(
         Panel(
-            "[bold green]Welcome to TradingAgents CLI[/bold green]\n"
-            "[dim]© [Tauric Research](https://github.com/TauricResearch)[/dim]",
-            title="Welcome to TradingAgents",
+            "[bold green]TradingAgents CLI[/bold green] - Multi-Agents LLM Financial Trading Framework",
+            title="Welcome",
             border_style="green",
-            padding=(1, 2),
-            expand=True,
         )
     )
 
@@ -208,14 +216,14 @@ def update_display(layout, spinner_text=None):
         show_header=True,
         header_style="bold magenta",
         show_footer=False,
-        box=box.SIMPLE_HEAD,  # Use simple header with horizontal lines
-        title=None,  # Remove the redundant Progress title
-        padding=(0, 2),  # Add horizontal padding
-        expand=True,  # Make table expand to fill available space
+        box=box.SIMPLE_HEAD,  # Use simple head for compact display
+        title=None,
+        padding=(0, 1),
+        expand=True,
     )
-    progress_table.add_column("Team", style="cyan", justify="center", width=20)
-    progress_table.add_column("Agent", style="green", justify="center", width=20)
-    progress_table.add_column("Status", style="yellow", justify="center", width=20)
+    progress_table.add_column("Team", style="cyan", justify="left", no_wrap=False)
+    progress_table.add_column("Agent", style="green", justify="left", no_wrap=False)
+    progress_table.add_column("Status", style="yellow", justify="center", width=12)
 
     # Group agents by team
     teams = {
@@ -231,7 +239,7 @@ def update_display(layout, spinner_text=None):
         "Portfolio Management": ["Portfolio Manager"],
     }
 
-    for team, agents in teams.items():
+    for team_idx, (team, agents) in enumerate(teams.items()):
         # Add first agent with team name
         first_agent = agents[0]
         status = message_buffer.agent_status[first_agent]
@@ -266,11 +274,8 @@ def update_display(layout, spinner_text=None):
                 status_cell = f"[{status_color}]{status}[/{status_color}]"
             progress_table.add_row("", agent, status_cell)
 
-        # Add horizontal line after each team
-        progress_table.add_row("─" * 20, "─" * 20, "─" * 20, style="dim")
-
     layout["progress"].update(
-        Panel(progress_table, title="Progress", border_style="cyan", padding=(1, 2))
+        Panel(progress_table, title="Progress", border_style="cyan", padding=(0, 1))
     )
 
     # Messages panel showing recent messages and tool calls
@@ -358,11 +363,13 @@ def update_display(layout, spinner_text=None):
     )
 
     # Analysis panel showing current report
+    # Note: Rich Layout does not support independent scrolling within panels during Live().
+    # The full content is shown and users can use their terminal's native scroll to navigate.
     if message_buffer.current_report:
         layout["analysis"].update(
             Panel(
                 Markdown(message_buffer.current_report),
-                title="Current Report",
+                title="Current Report [dim](Use terminal scroll to view all content)[/dim]",
                 border_style="green",
                 padding=(1, 2),
             )
@@ -524,6 +531,15 @@ def display_complete_report(final_state):
     """Display the complete analysis report with team-based panels."""
     console.print("\n[bold green]Complete Analysis Report[/bold green]\n")
 
+    def extract_text_content(content):
+        """Safely extract text from report content that may be a string or list of blocks."""
+        if isinstance(content, str):
+            return content
+        elif isinstance(content, list):
+            # Extract text from list of content blocks
+            return "".join([block.get("text", "") for block in content if isinstance(block, dict) and "text" in block])
+        return str(content)  # Fallback to string conversion
+
     # I. Analyst Team Reports
     analyst_reports = []
 
@@ -531,7 +547,7 @@ def display_complete_report(final_state):
     if final_state.get("market_report"):
         analyst_reports.append(
             Panel(
-                Markdown(final_state["market_report"]),
+                Markdown(extract_text_content(final_state["market_report"])),
                 title="Market Analyst",
                 border_style="blue",
                 padding=(1, 2),
@@ -542,7 +558,7 @@ def display_complete_report(final_state):
     if final_state.get("sentiment_report"):
         analyst_reports.append(
             Panel(
-                Markdown(final_state["sentiment_report"]),
+                Markdown(extract_text_content(final_state["sentiment_report"])),
                 title="Social Analyst",
                 border_style="blue",
                 padding=(1, 2),
@@ -553,7 +569,7 @@ def display_complete_report(final_state):
     if final_state.get("news_report"):
         analyst_reports.append(
             Panel(
-                Markdown(final_state["news_report"]),
+                Markdown(extract_text_content(final_state["news_report"])),
                 title="News Analyst",
                 border_style="blue",
                 padding=(1, 2),
@@ -564,7 +580,7 @@ def display_complete_report(final_state):
     if final_state.get("fundamentals_report"):
         analyst_reports.append(
             Panel(
-                Markdown(final_state["fundamentals_report"]),
+                Markdown(extract_text_content(final_state["fundamentals_report"])),
                 title="Fundamentals Analyst",
                 border_style="blue",
                 padding=(1, 2),
@@ -590,7 +606,7 @@ def display_complete_report(final_state):
         if debate_state.get("bull_history"):
             research_reports.append(
                 Panel(
-                    Markdown(debate_state["bull_history"]),
+                    Markdown(extract_text_content(debate_state["bull_history"])),
                     title="Bull Researcher",
                     border_style="blue",
                     padding=(1, 2),
@@ -601,7 +617,7 @@ def display_complete_report(final_state):
         if debate_state.get("bear_history"):
             research_reports.append(
                 Panel(
-                    Markdown(debate_state["bear_history"]),
+                    Markdown(extract_text_content(debate_state["bear_history"])),
                     title="Bear Researcher",
                     border_style="blue",
                     padding=(1, 2),
@@ -612,7 +628,7 @@ def display_complete_report(final_state):
         if debate_state.get("judge_decision"):
             research_reports.append(
                 Panel(
-                    Markdown(debate_state["judge_decision"]),
+                    Markdown(extract_text_content(debate_state["judge_decision"])),
                     title="Research Manager",
                     border_style="blue",
                     padding=(1, 2),
@@ -634,7 +650,7 @@ def display_complete_report(final_state):
         console.print(
             Panel(
                 Panel(
-                    Markdown(final_state["trader_investment_plan"]),
+                    Markdown(extract_text_content(final_state["trader_investment_plan"])),
                     title="Trader",
                     border_style="blue",
                     padding=(1, 2),
@@ -654,7 +670,7 @@ def display_complete_report(final_state):
         if risk_state.get("risky_history"):
             risk_reports.append(
                 Panel(
-                    Markdown(risk_state["risky_history"]),
+                    Markdown(extract_text_content(risk_state["risky_history"])),
                     title="Aggressive Analyst",
                     border_style="blue",
                     padding=(1, 2),
@@ -665,7 +681,7 @@ def display_complete_report(final_state):
         if risk_state.get("safe_history"):
             risk_reports.append(
                 Panel(
-                    Markdown(risk_state["safe_history"]),
+                    Markdown(extract_text_content(risk_state["safe_history"])),
                     title="Conservative Analyst",
                     border_style="blue",
                     padding=(1, 2),
@@ -676,7 +692,7 @@ def display_complete_report(final_state):
         if risk_state.get("neutral_history"):
             risk_reports.append(
                 Panel(
-                    Markdown(risk_state["neutral_history"]),
+                    Markdown(extract_text_content(risk_state["neutral_history"])),
                     title="Neutral Analyst",
                     border_style="blue",
                     padding=(1, 2),
@@ -698,7 +714,7 @@ def display_complete_report(final_state):
             console.print(
                 Panel(
                     Panel(
-                        Markdown(risk_state["judge_decision"]),
+                        Markdown(extract_text_content(risk_state["judge_decision"])),
                         title="Portfolio Manager",
                         border_style="blue",
                         padding=(1, 2),
@@ -717,21 +733,24 @@ def update_research_team_status(status):
         message_buffer.update_agent_status(agent, status)
 
 def extract_content_string(content):
-    """Extract string content from various message formats."""
+    """Extract clean text content from various message formats."""
     if isinstance(content, str):
         return content
     elif isinstance(content, list):
-        # Handle Anthropic's list format
+        # Handle list format (Anthropic/Gemini)
         text_parts = []
         for item in content:
             if isinstance(item, dict):
-                if item.get('type') == 'text':
-                    text_parts.append(item.get('text', ''))
+                # Extract text, ignoring extras like signatures
+                if item.get('type') == 'text' and 'text' in item:
+                    text_parts.append(item['text'])
                 elif item.get('type') == 'tool_use':
                     text_parts.append(f"[Tool: {item.get('name', 'unknown')}]")
-            else:
-                text_parts.append(str(item))
-        return ' '.join(text_parts)
+                elif 'text' in item:  # Fallback: just extract 'text' key
+                    text_parts.append(item['text'])
+            elif isinstance(item, str):
+                text_parts.append(item)
+        return '\n\n'.join(text_parts) if text_parts else str(content)
     else:
         return str(content)
 
@@ -791,6 +810,17 @@ def run_analysis():
             if section_name in obj.report_sections and obj.report_sections[section_name] is not None:
                 content = obj.report_sections[section_name]
                 if content:
+                    # Handle Gemini message format (list of dicts with 'type' and 'text')
+                    if isinstance(content, list):
+                        # Extract text from Gemini format
+                        text_parts = []
+                        for item in content:
+                            if isinstance(item, dict) and 'text' in item:
+                                text_parts.append(item['text'])
+                            elif isinstance(item, str):
+                                text_parts.append(item)
+                        content = '\n\n'.join(text_parts)
+
                     file_name = f"{section_name}.md"
                     with open(report_dir / file_name, "w") as f:
                         f.write(content)
@@ -800,12 +830,20 @@ def run_analysis():
     message_buffer.add_tool_call = save_tool_call_decorator(message_buffer, "add_tool_call")
     message_buffer.update_report_section = save_report_section_decorator(message_buffer, "update_report_section")
 
+    # Clear the console before starting the Live display to remove any debug output
+    console.clear()
+
     # Now start the display layout
     layout = create_layout()
 
-    with Live(layout, refresh_per_second=4) as live:
+    with Live(layout, refresh_per_second=4, console=console) as live:
         # Initial display
-        update_display(layout)
+        try:
+            update_display(layout)
+        except Exception as e:
+            console.print(f"[red]Error updating display: {e}[/red]")
+            import traceback
+            console.print(traceback.format_exc())
 
         # Add initial messages
         message_buffer.add_message("System", f"Selected ticker: {selections['ticker']}")
@@ -816,7 +854,12 @@ def run_analysis():
             "System",
             f"Selected analysts: {', '.join(analyst.value for analyst in selections['analysts'])}",
         )
-        update_display(layout)
+        try:
+            update_display(layout)
+        except Exception as e:
+            console.print(f"[red]Error updating display: {e}[/red]")
+            import traceback
+            console.print(traceback.format_exc())
 
         # Reset agent statuses
         for agent in message_buffer.agent_status:
@@ -930,8 +973,9 @@ def run_analysis():
                     if "bull_history" in debate_state and debate_state["bull_history"]:
                         # Keep all research team members in progress
                         update_research_team_status("in_progress")
-                        # Extract latest bull response
-                        bull_responses = debate_state["bull_history"].split("\n")
+                        # Extract latest bull response and clean it
+                        bull_history_text = extract_content_string(debate_state["bull_history"])
+                        bull_responses = bull_history_text.split("\n")
                         latest_bull = bull_responses[-1] if bull_responses else ""
                         if latest_bull:
                             message_buffer.add_message("Reasoning", latest_bull)
@@ -945,8 +989,9 @@ def run_analysis():
                     if "bear_history" in debate_state and debate_state["bear_history"]:
                         # Keep all research team members in progress
                         update_research_team_status("in_progress")
-                        # Extract latest bear response
-                        bear_responses = debate_state["bear_history"].split("\n")
+                        # Extract latest bear response and clean it
+                        bear_history_text = extract_content_string(debate_state["bear_history"])
+                        bear_responses = bear_history_text.split("\n")
                         latest_bear = bear_responses[-1] if bear_responses else ""
                         if latest_bear:
                             message_buffer.add_message("Reasoning", latest_bear)
@@ -963,14 +1008,16 @@ def run_analysis():
                     ):
                         # Keep all research team members in progress until final decision
                         update_research_team_status("in_progress")
+                        # Extract clean decision text
+                        clean_decision = extract_content_string(debate_state['judge_decision'])
                         message_buffer.add_message(
                             "Reasoning",
-                            f"Research Manager: {debate_state['judge_decision']}",
+                            f"Research Manager: {clean_decision}",
                         )
                         # Update research report with final decision
                         message_buffer.update_report_section(
                             "investment_plan",
-                            f"{message_buffer.report_sections['investment_plan']}\n\n### Research Manager Decision\n{debate_state['judge_decision']}",
+                            f"{message_buffer.report_sections['investment_plan']}\n\n### Research Manager Decision\n{clean_decision}",
                         )
                         # Mark all research team members as completed
                         update_research_team_status("completed")
@@ -1002,14 +1049,16 @@ def run_analysis():
                         message_buffer.update_agent_status(
                             "Risky Analyst", "in_progress"
                         )
+                        # Extract clean text from response
+                        clean_response = extract_content_string(risk_state['current_risky_response'])
                         message_buffer.add_message(
                             "Reasoning",
-                            f"Risky Analyst: {risk_state['current_risky_response']}",
+                            f"Risky Analyst: {clean_response}",
                         )
                         # Update risk report with risky analyst's latest analysis only
                         message_buffer.update_report_section(
                             "final_trade_decision",
-                            f"### Risky Analyst Analysis\n{risk_state['current_risky_response']}",
+                            f"### Risky Analyst Analysis\n{clean_response}",
                         )
 
                     # Update Safe Analyst status and report
@@ -1020,14 +1069,16 @@ def run_analysis():
                         message_buffer.update_agent_status(
                             "Safe Analyst", "in_progress"
                         )
+                        # Extract clean text from response
+                        clean_response = extract_content_string(risk_state['current_safe_response'])
                         message_buffer.add_message(
                             "Reasoning",
-                            f"Safe Analyst: {risk_state['current_safe_response']}",
+                            f"Safe Analyst: {clean_response}",
                         )
                         # Update risk report with safe analyst's latest analysis only
                         message_buffer.update_report_section(
                             "final_trade_decision",
-                            f"### Safe Analyst Analysis\n{risk_state['current_safe_response']}",
+                            f"### Safe Analyst Analysis\n{clean_response}",
                         )
 
                     # Update Neutral Analyst status and report
@@ -1038,14 +1089,16 @@ def run_analysis():
                         message_buffer.update_agent_status(
                             "Neutral Analyst", "in_progress"
                         )
+                        # Extract clean text from response
+                        clean_response = extract_content_string(risk_state['current_neutral_response'])
                         message_buffer.add_message(
                             "Reasoning",
-                            f"Neutral Analyst: {risk_state['current_neutral_response']}",
+                            f"Neutral Analyst: {clean_response}",
                         )
                         # Update risk report with neutral analyst's latest analysis only
                         message_buffer.update_report_section(
                             "final_trade_decision",
-                            f"### Neutral Analyst Analysis\n{risk_state['current_neutral_response']}",
+                            f"### Neutral Analyst Analysis\n{clean_response}",
                         )
 
                     # Update Portfolio Manager status and final decision
@@ -1053,14 +1106,16 @@ def run_analysis():
                         message_buffer.update_agent_status(
                             "Portfolio Manager", "in_progress"
                         )
+                        # Extract clean text from decision
+                        clean_decision = extract_content_string(risk_state['judge_decision'])
                         message_buffer.add_message(
                             "Reasoning",
-                            f"Portfolio Manager: {risk_state['judge_decision']}",
+                            f"Portfolio Manager: {clean_decision}",
                         )
                         # Update risk report with final decision only
                         message_buffer.update_report_section(
                             "final_trade_decision",
-                            f"### Portfolio Manager Decision\n{risk_state['judge_decision']}",
+                            f"### Portfolio Manager Decision\n{clean_decision}",
                         )
                         # Mark risk analysts as completed
                         message_buffer.update_agent_status("Risky Analyst", "completed")

@@ -537,7 +537,29 @@ def display_complete_report(final_state):
             return content
         elif isinstance(content, list):
             # Extract text from list of content blocks
-            return "".join([block.get("text", "") for block in content if isinstance(block, dict) and "text" in block])
+            text_parts = []
+            for block in content:
+                if isinstance(block, dict):
+                    # Handle nested text structure (e.g., {'type': 'text', 'text': '...', 'extras': {...}})
+                    if block.get('type') == 'text' and 'text' in block:
+                        nested_text = block['text']
+                        if isinstance(nested_text, str):
+                            text_parts.append(nested_text)
+                        elif isinstance(nested_text, (list, dict)):
+                            # Recursively extract if text itself is a structure
+                            text_parts.append(extract_text_content(nested_text))
+                    elif 'text' in block:
+                        # Handle blocks with just 'text' key
+                        nested_text = block['text']
+                        if isinstance(nested_text, str):
+                            text_parts.append(nested_text)
+                        elif isinstance(nested_text, (list, dict)):
+                            text_parts.append(extract_text_content(nested_text))
+                    elif block.get('type') == 'tool_use':
+                        text_parts.append(f"[Tool: {block.get('name', 'unknown')}]")
+                elif isinstance(block, str):
+                    text_parts.append(block)
+            return '\n\n'.join(text_parts) if text_parts else str(content)
         return str(content)  # Fallback to string conversion
 
     # I. Analyst Team Reports
@@ -741,13 +763,22 @@ def extract_content_string(content):
         text_parts = []
         for item in content:
             if isinstance(item, dict):
-                # Extract text, ignoring extras like signatures
+                # Handle nested text structure (e.g., {'type': 'text', 'text': '...', 'extras': {...}})
                 if item.get('type') == 'text' and 'text' in item:
-                    text_parts.append(item['text'])
+                    nested_text = item['text']
+                    if isinstance(nested_text, str):
+                        text_parts.append(nested_text)
+                    elif isinstance(nested_text, (list, dict)):
+                        # Recursively extract if text itself is a structure
+                        text_parts.append(extract_content_string(nested_text))
                 elif item.get('type') == 'tool_use':
                     text_parts.append(f"[Tool: {item.get('name', 'unknown')}]")
                 elif 'text' in item:  # Fallback: just extract 'text' key
-                    text_parts.append(item['text'])
+                    nested_text = item['text']
+                    if isinstance(nested_text, str):
+                        text_parts.append(nested_text)
+                    elif isinstance(nested_text, (list, dict)):
+                        text_parts.append(extract_content_string(nested_text))
             elif isinstance(item, str):
                 text_parts.append(item)
         return '\n\n'.join(text_parts) if text_parts else str(content)
@@ -771,6 +802,10 @@ def run_analysis():
     graph = TradingAgentsGraph(
         [analyst.value for analyst in selections["analysts"]], config=config, debug=True
     )
+
+    # Create general reports directory
+    general_reports_dir = Path("reports")
+    general_reports_dir.mkdir(parents=True, exist_ok=True)
 
     # Create result directory
     results_dir = Path(config["results_dir"]) / selections["ticker"] / selections["analysis_date"]
@@ -821,9 +856,16 @@ def run_analysis():
                                 text_parts.append(item)
                         content = '\n\n'.join(text_parts)
 
+                    # Original save in results directory
                     file_name = f"{section_name}.md"
                     with open(report_dir / file_name, "w") as f:
                         f.write(content)
+
+                    # Additional save in general reports directory ONLY for final_trade_decision
+                    if section_name == "final_trade_decision":
+                        copy_file_name = f"{selections['analysis_date']}_{selections['ticker']}_{section_name}.md"
+                        with open(general_reports_dir / copy_file_name, "w") as f:
+                            f.write(content)
         return wrapper
 
     message_buffer.add_message = save_message_decorator(message_buffer, "add_message")

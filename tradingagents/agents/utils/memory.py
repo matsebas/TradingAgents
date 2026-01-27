@@ -1,5 +1,4 @@
 import chromadb
-from chromadb.config import Settings
 from openai import OpenAI
 import os
 
@@ -19,7 +18,7 @@ class FinancialSituationMemory:
                 if not api_key:
                     raise ValueError("GEMINI_API_KEY or GOOGLE_API_KEY environment variable must be set for Google embeddings")
                 self.client = genai.Client(api_key=api_key)
-                self.embedding = "text-embedding-004"  # Google's embedding model
+                self.embedding = "gemini-embedding-001"  # Google's embedding model
             except ImportError:
                 print("Warning: google.genai not available, falling back to OpenAI")
                 self.client_type = "openai"
@@ -40,8 +39,12 @@ class FinancialSituationMemory:
             else:
                 self.client = OpenAI(base_url=config["backend_url"])
 
-        self.chroma_client = chromadb.Client(Settings(allow_reset=True))
-        self.situation_collection = self.chroma_client.create_collection(name=name)
+        # Use persistent ChromaDB storage
+        persist_path = config.get("memory_path", "./chroma_db")
+        self.chroma_client = chromadb.PersistentClient(path=persist_path)
+
+        # Get or create collection to reuse existing data
+        self.situation_collection = self.chroma_client.get_or_create_collection(name=name)
 
     def get_embedding(self, text):
         """Get embedding for a text from configured provider"""

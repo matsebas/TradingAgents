@@ -1,6 +1,7 @@
 .venv
 results
 reports
+chroma_db
 env/
 __pycache__/
 .DS_Store

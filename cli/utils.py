@@ -204,7 +204,7 @@ def select_deep_thinking_agent(provider) -> str:
             ("Claude Opus 4 - Most powerful Anthropic model", "	claude-opus-4-0"),
         ],
         "google": [
-            ("Gemini 3.0 Pro Preview", "gemini-3-pro-preview"),
+            ("Gemini 3.1 Pro Preview", "gemini-3.1-pro-preview"),
             ("Gemini 3.0 Flash Preview - Latest fast model (recommended)", "gemini-3-flash-preview"),
             ("Gemini 2.5 Pro", "gemini-2.5-pro-preview-06-05"),
         ],

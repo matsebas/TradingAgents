@@ -6,6 +6,7 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import json
 from .reddit_utils import fetch_top_from_category
+from .utils import parse_date
 from tqdm import tqdm
 
 def get_YFin_data_window(
@@ -14,7 +15,7 @@ def get_YFin_data_window(
     look_back_days: Annotated[int, "how many days to look back"],
 ) -> str:
     # calculate past days
-    date_obj = datetime.strptime(curr_date, "%Y-%m-%d")
+    date_obj = parse_date(curr_date, field_name="curr_date")
     before = date_obj - relativedelta(days=look_back_days)
     start_date = before.strftime("%Y-%m-%d")
 
@@ -130,7 +131,7 @@ def get_finnhub_company_insider_sentiment(
         str: a report of the sentiment in the past 15 days starting at curr_date
     """
 
-    date_obj = datetime.strptime(curr_date, "%Y-%m-%d")
+    date_obj = parse_date(curr_date, field_name="curr_date")
     before = date_obj - relativedelta(days=15)  # Default 15 days lookback
     before = before.strftime("%Y-%m-%d")
 
@@ -167,7 +168,7 @@ def get_finnhub_company_insider_transactions(
         str: a report of the company's insider transaction/trading informtaion in the past 15 days
     """
 
-    date_obj = datetime.strptime(curr_date, "%Y-%m-%d")
+    date_obj = parse_date(curr_date, field_name="curr_date")
     before = date_obj - relativedelta(days=15)  # Default 15 days lookback
     before = before.strftime("%Y-%m-%d")
 
@@ -380,13 +381,13 @@ def get_reddit_global_news(
         str: A formatted string containing the latest news articles posts on reddit
     """
 
-    curr_date_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+    curr_date_dt = parse_date(curr_date, field_name="curr_date")
     before = curr_date_dt - relativedelta(days=look_back_days)
     before = before.strftime("%Y-%m-%d")
 
     posts = []
     # iterate from before to curr_date
-    curr_iter_date = datetime.strptime(before, "%Y-%m-%d")
+    curr_iter_date = parse_date(before, field_name="before")
 
     total_iterations = (curr_date_dt - curr_iter_date).days + 1
     pbar = tqdm(desc=f"Getting Global News on {curr_date}", total=total_iterations)
@@ -433,8 +434,8 @@ def get_reddit_company_news(
         str: A formatted string containing news articles posts on reddit
     """
 
-    start_date_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    end_date_dt = datetime.strptime(end_date, "%Y-%m-%d")
+    start_date_dt = parse_date(start_date, field_name="start_date")
+    end_date_dt = parse_date(end_date, field_name="end_date")
 
     posts = []
     # iterate from start_date to end_date

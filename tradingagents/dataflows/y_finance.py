@@ -4,6 +4,7 @@ from dateutil.relativedelta import relativedelta
 import yfinance as yf
 import os
 from .stockstats_utils import StockstatsUtils
+from .utils import normalize_date, parse_date
 
 def get_YFin_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],
@@ -11,8 +12,8 @@ def get_YFin_data_online(
     end_date: Annotated[str, "End date in yyyy-mm-dd format"],
 ):
 
-    datetime.strptime(start_date, "%Y-%m-%d")
-    datetime.strptime(end_date, "%Y-%m-%d")
+    start_date = normalize_date(start_date, field_name="start_date")
+    end_date = normalize_date(end_date, field_name="end_date")
 
     # Create ticker object
     ticker = yf.Ticker(symbol.upper())
@@ -87,8 +88,9 @@ def get_stock_stats_indicators_window(
     if any("200" in ind for ind in valid_indicators) and look_back_days < 200:
         look_back_days = 250 # Necesitamos más historial para calcular medias de 200 días
 
+    curr_date = normalize_date(curr_date, field_name="curr_date")
     end_date = curr_date
-    curr_date_dt = datetime.strptime(curr_date, "%Y-%m-%d")
+    curr_date_dt = parse_date(curr_date)
     before = curr_date_dt - relativedelta(days=look_back_days)
 
     total_report = f"## Technical Indicators for {symbol} from {before.strftime('%Y-%m-%d')} to {end_date}:\n\n"
@@ -216,8 +218,8 @@ def get_stockstats_indicator(
     ],
 ) -> str:
 
-    curr_date_dt = datetime.strptime(curr_date, "%Y-%m-%d")
-    curr_date = curr_date_dt.strftime("%Y-%m-%d")
+    curr_date = normalize_date(curr_date, field_name="curr_date")
+    curr_date_dt = parse_date(curr_date)
 
     try:
         indicator_value = StockstatsUtils.get_stock_stats(

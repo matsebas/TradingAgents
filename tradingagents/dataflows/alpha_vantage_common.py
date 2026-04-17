@@ -5,6 +5,8 @@ import json
 from datetime import datetime
 from io import StringIO
 
+from .utils import normalize_date
+
 API_BASE_URL = "https://www.alphavantage.co/query"
 
 def get_api_key() -> str:
@@ -20,9 +22,10 @@ def format_datetime_for_api(date_input) -> str:
         # If already in correct format, return as-is
         if len(date_input) == 13 and 'T' in date_input:
             return date_input
-        # Try to parse common date formats
+        # Try to parse common date formats — normalize_date tolerates
+        # LLM-mangled arguments like "2026-04-17,extra:field"
         try:
-            dt = datetime.strptime(date_input, "%Y-%m-%d")
+            dt = datetime.strptime(normalize_date(date_input), "%Y-%m-%d")
             return dt.strftime("%Y%m%dT0000")
         except ValueError:
             try:

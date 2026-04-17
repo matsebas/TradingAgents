@@ -12,6 +12,8 @@ from tenacity import (
     retry_if_result,
 )
 
+from .utils import parse_date
+
 
 def is_rate_limited(response):
     """Check if the response indicates rate limiting (status code 429)"""
@@ -39,11 +41,9 @@ def getNewsData(query, start_date, end_date):
     end_date: str - end date in the format yyyy-mm-dd or mm/dd/yyyy
     """
     if "-" in start_date:
-        start_date = datetime.strptime(start_date, "%Y-%m-%d")
-        start_date = start_date.strftime("%m/%d/%Y")
+        start_date = parse_date(start_date, field_name="start_date").strftime("%m/%d/%Y")
     if "-" in end_date:
-        end_date = datetime.strptime(end_date, "%Y-%m-%d")
-        end_date = end_date.strftime("%m/%d/%Y")
+        end_date = parse_date(end_date, field_name="end_date").strftime("%m/%d/%Y")
 
     headers = {
         "User-Agent": (

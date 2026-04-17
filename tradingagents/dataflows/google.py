@@ -2,6 +2,7 @@ from typing import Annotated
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 from .googlenews_utils import getNewsData
+from .utils import normalize_date, parse_date
 
 
 def get_google_news(
@@ -11,7 +12,8 @@ def get_google_news(
 ) -> str:
     query = query.replace(" ", "+")
 
-    start_date = datetime.strptime(curr_date, "%Y-%m-%d")
+    curr_date = normalize_date(curr_date, field_name="curr_date")
+    start_date = parse_date(curr_date)
     before = start_date - relativedelta(days=look_back_days)
     before = before.strftime("%Y-%m-%d")
 

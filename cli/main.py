@@ -1202,5 +1202,131 @@ def analyze():
     run_analysis()
 
 
+@app.command()
+def portfolio(
+    positions: Optional[str] = typer.Option(
+        None,
+        "--positions",
+        "-p",
+        help="Path to a positions CSV exported by your broker.",
+    ),
+    tickers: Optional[str] = typer.Option(
+        None,
+        "--tickers",
+        "-t",
+        help="Comma-separated list of tickers (e.g. NVDA,AMZN,SPY).",
+    ),
+    analysis_date: Optional[str] = typer.Option(
+        None,
+        "--date",
+        "-d",
+        help="Analysis date in YYYY-MM-DD format. Defaults to today.",
+    ),
+    types: str = typer.Option(
+        "CEDEARS",
+        "--types",
+        help="Comma-separated instrument types to keep when parsing a positions CSV.",
+    ),
+    max_concurrency: int = typer.Option(
+        10,
+        "--max-concurrency",
+        "-c",
+        help="Max tickers analysed in parallel.",
+    ),
+) -> None:
+    """Run the TradingAgents pipeline for a list of tickers in parallel."""
+    import asyncio
+
+    from cli.utils import get_portfolio_date, parse_tickers_input
+    from tradingagents.graph.portfolio import PortfolioReporter
+
+    type_list = [t.strip() for t in types.split(",") if t.strip()]
+
+    # Resolve tickers
+    if positions:
+        resolved = parse_tickers_input(positions, types=type_list)
+    elif tickers:
+        resolved = parse_tickers_input(tickers, types=type_list)
+    else:
+        raw = questionary.text(
+            "Enter tickers (comma-separated) OR path to a positions CSV:",
+            validate=lambda x: len(x.strip()) > 0 or "Required.",
+        ).ask()
+        if not raw:
+            console.print("[red]No input. Exiting...[/red]")
+            raise typer.Exit(code=1)
+        resolved = parse_tickers_input(raw.strip(), types=type_list)
+
+    if not resolved:
+        console.print(
+            "[red]No tickers resolved from input. Check --types and file contents.[/red]"
+        )
+        raise typer.Exit(code=1)
+
+    trade_date = analysis_date or get_portfolio_date()
+
+    console.print(
+        Panel(
+            f"[bold]Tickers ({len(resolved)}):[/bold] {', '.join(resolved)}\n"
+            f"[bold]Date:[/bold] {trade_date}\n"
+            f"[bold]Max concurrency:[/bold] {max_concurrency}",
+            title="Portfolio Analysis",
+            border_style="green",
+        )
+    )
+
+    config = DEFAULT_CONFIG.copy()
+    # Force flash models — running N tickers in parallel would be too costly
+    # and slow with Pro. Override at call-site if you really want Pro.
+    config["quick_think_llm"] = "gemini-3-flash-preview"
+    config["deep_think_llm"] = "gemini-3-flash-preview"
+    ta = TradingAgentsGraph(config=config, debug=False)
+
+    # Route noisy vendor debug prints to a log file so the live dashboard
+    # stays legible. The file is always saved even if the run fails.
+    import contextlib
+    import sys
+
+    log_dir = Path("eval_results/_portfolio")
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"portfolio_{trade_date}.log"
+
+    from rich.console import Console as RichConsole
+
+    from tradingagents.graph.portfolio import PortfolioProgress, PortfolioReporter
+
+    # Bind a console to the real stdout BEFORE redirecting, so the live
+    # dashboard keeps rendering to the terminal while vendor prints go to
+    # the log file.
+    dashboard_console = RichConsole(file=sys.stdout)
+
+    async def _run(progress):
+        return await ta.propagate_portfolio(
+            resolved,
+            trade_date,
+            max_concurrency=max_concurrency,
+            progress=progress,
+        )
+
+    with log_file.open("w", encoding="utf-8") as log_fh, contextlib.redirect_stdout(log_fh):
+        # stderr stays on the terminal so unexpected tracebacks still surface.
+        with PortfolioProgress(resolved, console=dashboard_console) as progress:
+            results = asyncio.run(_run(progress))
+
+    reporter = PortfolioReporter(console=console)
+    console.print()  # spacing between live table and final report
+    reporter.render_table(results, trade_date)
+    json_path = reporter.save_json(results, trade_date)
+    md_path = reporter.save_markdown(results, trade_date)
+    csv_path = reporter.save_csv(results, trade_date)
+    console.print(
+        f"\n[dim]Aggregated reports saved:\n"
+        f"  JSON:     {json_path}\n"
+        f"  Markdown: {md_path}\n"
+        f"  CSV:      {csv_path}\n"
+        f"  Run log:  {log_file}[/dim]"
+    )
+
+
 if __name__ == "__main__":
     app()

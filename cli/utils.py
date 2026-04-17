@@ -1,5 +1,8 @@
+import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
+
 import questionary
-from typing import List, Optional, Tuple, Dict
 
 from cli.main import console
 from cli.models import AnalystType
@@ -30,6 +33,83 @@ def get_ticker() -> str:
         exit(1)
 
     return ticker.strip().upper()
+
+
+def get_tickers() -> List[str]:
+    """Prompt for a list of tickers.
+
+    Accepts either a path to a CSV position report or a comma-separated list.
+    """
+    raw = questionary.text(
+        "Enter tickers (comma-separated) OR path to a positions CSV:",
+        validate=lambda x: len(x.strip()) > 0 or "Please enter tickers or a CSV path.",
+        style=questionary.Style(
+            [
+                ("text", "fg:green"),
+                ("highlighted", "noinherit"),
+            ]
+        ),
+    ).ask()
+
+    if not raw:
+        console.print("\n[red]No tickers provided. Exiting...[/red]")
+        exit(1)
+
+    return parse_tickers_input(raw.strip())
+
+
+def parse_tickers_input(raw: str, types: Optional[List[str]] = None) -> List[str]:
+    """Resolve a user-provided string into a ticker list.
+
+    If the string is an existing file path, parse it as a positions CSV.
+    Otherwise treat it as a comma-separated ticker list.
+    """
+    from tradingagents.dataflows.position_parser import parse_positions_csv
+
+    candidate = Path(raw).expanduser()
+    if candidate.exists() and candidate.is_file():
+        positions = parse_positions_csv(candidate, types=types)
+        tickers = [p.ticker for p in positions]
+    else:
+        tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
+
+    # Dedupe preserving order
+    seen = set()
+    out = []
+    for t in tickers:
+        if t and t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
+def get_portfolio_date() -> str:
+    """Prompt for an analysis date; defaults to today."""
+    today = datetime.date.today().isoformat()
+    import re
+
+    def validate_date(s: str) -> bool:
+        if not s:
+            return True
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", s):
+            return False
+        try:
+            datetime.datetime.strptime(s, "%Y-%m-%d")
+            return True
+        except ValueError:
+            return False
+
+    date = questionary.text(
+        f"Analysis date (YYYY-MM-DD, blank = today {today}):",
+        validate=lambda x: validate_date(x.strip())
+        or "Please enter a valid date in YYYY-MM-DD format.",
+    ).ask()
+
+    if date is None:
+        console.print("\n[red]No date provided. Exiting...[/red]")
+        exit(1)
+
+    return date.strip() or today
 
 
 def get_analysis_date() -> str:
@@ -204,8 +284,9 @@ def select_deep_thinking_agent(provider) -> str:
             ("Claude Opus 4 - Most powerful Anthropic model", "	claude-opus-4-0"),
         ],
         "google": [
-            ("Gemini 3.1 Pro Preview", "gemini-3.1-pro-preview"),
             ("Gemini 3.0 Flash Preview - Latest fast model (recommended)", "gemini-3-flash-preview"),
+            ("Gemini 2.5 Flash - Adaptive thinking, cost efficiency", "gemini-2.5-flash-preview-05-20"),
+            ("Gemini 3.1 Pro Preview", "gemini-3.1-pro-preview"),
             ("Gemini 2.5 Pro", "gemini-2.5-pro-preview-06-05"),
         ],
         "openrouter": [

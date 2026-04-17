@@ -1,6 +1,8 @@
+import os
+import uuid
+
 import chromadb
 from openai import OpenAI
-import os
 
 
 class FinancialSituationMemory:
@@ -71,12 +73,12 @@ class FinancialSituationMemory:
         ids = []
         embeddings = []
 
-        offset = self.situation_collection.count()
-
-        for i, (situation, recommendation) in enumerate(situations_and_advice):
+        for situation, recommendation in situations_and_advice:
             situations.append(situation)
             advice.append(recommendation)
-            ids.append(str(offset + i))
+            # UUIDs avoid the count()+offset race condition when multiple
+            # workers write into the same collection concurrently.
+            ids.append(str(uuid.uuid4()))
             embeddings.append(self.get_embedding(situation))
 
         self.situation_collection.add(

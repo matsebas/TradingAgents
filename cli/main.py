@@ -1237,16 +1237,16 @@ def portfolio(
     """Run the TradingAgents pipeline for a list of tickers in parallel."""
     import asyncio
 
-    from cli.utils import get_portfolio_date, parse_tickers_input
+    from cli.utils import get_portfolio_date, resolve_positions_input
     from tradingagents.graph.portfolio import PortfolioReporter
 
     type_list = [t.strip() for t in types.split(",") if t.strip()]
 
-    # Resolve tickers
+    # Resolve tickers + optional holdings (PPPC) for portfolio-aware prompts.
     if positions:
-        resolved = parse_tickers_input(positions, types=type_list)
+        resolved, holdings = resolve_positions_input(positions, types=type_list)
     elif tickers:
-        resolved = parse_tickers_input(tickers, types=type_list)
+        resolved, holdings = resolve_positions_input(tickers, types=type_list)
     else:
         raw = questionary.text(
             "Enter tickers (comma-separated) OR path to a positions CSV:",
@@ -1255,7 +1255,7 @@ def portfolio(
         if not raw:
             console.print("[red]No input. Exiting...[/red]")
             raise typer.Exit(code=1)
-        resolved = parse_tickers_input(raw.strip(), types=type_list)
+        resolved, holdings = resolve_positions_input(raw.strip(), types=type_list)
 
     if not resolved:
         console.print(
@@ -1306,6 +1306,7 @@ def portfolio(
             trade_date,
             max_concurrency=max_concurrency,
             progress=progress,
+            holdings=holdings or None,
         )
 
     with log_file.open("w", encoding="utf-8") as log_fh, contextlib.redirect_stdout(log_fh):
@@ -1315,7 +1316,14 @@ def portfolio(
 
     reporter = PortfolioReporter(console=console)
     console.print()  # spacing between live table and final report
-    reporter.render_table(results, trade_date)
+    pppc_by_ticker = {
+        t: f"{ctx['avg_cost']:.2f}"
+        for t, ctx in (holdings or {}).items()
+        if ctx.get("avg_cost") is not None
+    }
+    reporter.render_table(
+        results, trade_date, pppc_by_ticker=pppc_by_ticker or None
+    )
     json_path = reporter.save_json(results, trade_date)
     md_path = reporter.save_markdown(results, trade_date)
     csv_path = reporter.save_csv(results, trade_date)

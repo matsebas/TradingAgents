@@ -213,6 +213,112 @@ class PortfolioProgress:
         return table
 
 
+# Ordered list of (state_key, section_heading) pairs for plain-text reports.
+# These mirror the fields dumped to `full_states_log_{date}.json`.
+_DETAIL_REPORT_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("market_report", "📊 Market Analyst Report"),
+    ("sentiment_report", "💬 Social Sentiment Report"),
+    ("news_report", "📰 News Analyst Report"),
+    ("fundamentals_report", "📈 Fundamentals Analyst Report"),
+)
+
+# Ordered list of (sub_key, section_heading) for the bull/bear debate.
+_DETAIL_INVEST_DEBATE_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("bull_history", "🐂 Bull Researcher"),
+    ("bear_history", "🐻 Bear Researcher"),
+    ("history", "Debate Transcript"),
+    ("current_response", "Latest Response"),
+    ("judge_decision", "🧠 Research Manager Decision"),
+)
+
+# Ordered list of (sub_key, section_heading) for the risk debate.
+_DETAIL_RISK_DEBATE_SECTIONS: tuple[tuple[str, str], ...] = (
+    ("risky_history", "🔥 Risky Analyst"),
+    ("safe_history", "🛡 Safe Analyst"),
+    ("neutral_history", "⚖ Neutral Analyst"),
+    ("history", "Risk Debate Transcript"),
+    ("judge_decision", "⚖ Risk Judge Decision"),
+)
+
+
+def _append_section(lines: list[str], heading: str, body: Any, level: int = 4) -> None:
+    """Append a markdown sub-section with the given heading and body.
+
+    No-op when the body is empty after flattening Gemini-shape content.
+    """
+    text = _coerce_to_text(body).strip()
+    if not text:
+        return
+    lines.append("")
+    lines.append(f"{'#' * level} {heading}")
+    lines.append("")
+    lines.append(text)
+
+
+def _render_ticker_detail(r: "PortfolioResult") -> list[str]:
+    """Expand a ticker's final state into markdown mirroring the JSON log.
+
+    Falls back to a fenced decision block when ``r.state`` is unavailable
+    (e.g. in tests with a stubbed state dict).
+    """
+    state = r.state or {}
+    lines: list[str] = []
+
+    has_detail = any(
+        state.get(key) for key, _ in _DETAIL_REPORT_SECTIONS
+    ) or state.get("investment_debate_state") or state.get("risk_debate_state") or state.get(
+        "investment_plan"
+    ) or state.get("trader_investment_plan") or state.get("final_trade_decision")
+
+    if not has_detail:
+        lines.append("")
+        lines.append("```")
+        lines.append((r.decision or "").strip())
+        lines.append("```")
+        return lines
+
+    # Surface the portfolio context that was fed to Trader + Risk Judge so
+    # the reader can see what the decision was anchored on.
+    pc = state.get("portfolio_context")
+    if pc:
+        from tradingagents.agents.utils.portfolio_context import (
+            format_portfolio_context,
+        )
+
+        block = format_portfolio_context(pc, r.ticker)
+        if block:
+            lines.append("")
+            lines.append("#### 💼 Portfolio Context (injected)")
+            lines.append("")
+            lines.append(block)
+
+    for key, heading in _DETAIL_REPORT_SECTIONS:
+        _append_section(lines, heading, state.get(key))
+
+    invest = state.get("investment_debate_state") or {}
+    if any(invest.get(k) for k, _ in _DETAIL_INVEST_DEBATE_SECTIONS):
+        lines.append("")
+        lines.append("#### 🥊 Bull vs Bear Debate")
+        for sub_key, sub_heading in _DETAIL_INVEST_DEBATE_SECTIONS:
+            _append_section(lines, sub_heading, invest.get(sub_key), level=5)
+
+    _append_section(lines, "🧠 Investment Plan", state.get("investment_plan"))
+    _append_section(
+        lines, "💼 Trader Investment Decision", state.get("trader_investment_plan")
+    )
+
+    risk = state.get("risk_debate_state") or {}
+    if any(risk.get(k) for k, _ in _DETAIL_RISK_DEBATE_SECTIONS):
+        lines.append("")
+        lines.append("#### ⚠ Risk Management Debate")
+        for sub_key, sub_heading in _DETAIL_RISK_DEBATE_SECTIONS:
+            _append_section(lines, sub_heading, risk.get(sub_key), level=5)
+
+    _append_section(lines, "✅ Final Trade Decision", state.get("final_trade_decision"))
+
+    return lines
+
+
 def _extract_short_decision(decision: Any) -> str | None:
     text = _coerce_to_text(decision)
     if not text:
@@ -408,10 +514,7 @@ class PortfolioReporter:
             for r in ok:
                 lines.append("")
                 lines.append(f"### {r.ticker} — {r.short_decision()}")
-                lines.append("")
-                lines.append("```")
-                lines.append((r.decision or "").strip())
-                lines.append("```")
+                lines.extend(_render_ticker_detail(r))
 
         file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return file_path

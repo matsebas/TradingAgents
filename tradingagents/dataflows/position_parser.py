@@ -21,12 +21,39 @@ from typing import Iterable
 DEFAULT_TYPES = ("CEDEARS",)
 TICKER_COLUMN = "abreviatura_instrumento"
 TYPE_COLUMN = "descripcion_tipo_especie"
+PPPC_COLUMN = "pppc_mep"  # weighted-average cost in MEP (USD equivalent)
+QUANTITY_COLUMN = "total"  # number of units held (CEDEARs / shares / etc.)
+# Unrealized return as a fraction (e.g. 0.2190 = +21.90%). Ratio-invariant,
+# so reliable even when PPPC is expressed in CEDEAR units.
+RETURN_PCT_COLUMN = "rendimiento_pct_mep"
 
 
 @dataclass(frozen=True)
 class ParsedPosition:
     ticker: str
     instrument_type: str
+    pppc: float | None = None  # weighted-average purchase price (in row currency)
+    quantity: float | None = None
+    unrealized_return_pct: float | None = None  # fraction, not percent points
+
+
+def _parse_number(raw: str | None) -> float | None:
+    """Parse a number that may use ``,`` or ``.`` as the decimal separator."""
+    if raw is None:
+        return None
+    text = raw.strip().replace(",", ".")
+    if not text:
+        return None
+    try:
+        return float(text)
+    except ValueError:
+        return None
+
+
+def _parse_pppc(raw: str | None) -> float | None:
+    value = _parse_number(raw)
+    # Treat 0 (missing cost) as "unknown" so downstream code can skip it.
+    return value if value and value > 0 else None
 
 
 def _detect_separator(sample: str) -> str:
@@ -70,6 +97,10 @@ def parse_positions_csv(
                 f"Found columns: {reader.fieldnames}"
             )
         has_type_column = TYPE_COLUMN in reader.fieldnames
+        fieldnames = reader.fieldnames or ()
+        has_pppc_column = PPPC_COLUMN in fieldnames
+        has_qty_column = QUANTITY_COLUMN in fieldnames
+        has_return_column = RETURN_PCT_COLUMN in fieldnames
 
         seen: set[str] = set()
         out: list[ParsedPosition] = []
@@ -83,6 +114,19 @@ def parse_positions_csv(
             if not ticker or ticker in seen:
                 continue
             seen.add(ticker)
-            out.append(ParsedPosition(ticker=ticker, instrument_type=instrument_type))
+            pppc = _parse_pppc(row.get(PPPC_COLUMN)) if has_pppc_column else None
+            qty = _parse_number(row.get(QUANTITY_COLUMN)) if has_qty_column else None
+            if qty is not None and qty <= 0:
+                qty = None
+            ret_pct = _parse_number(row.get(RETURN_PCT_COLUMN)) if has_return_column else None
+            out.append(
+                ParsedPosition(
+                    ticker=ticker,
+                    instrument_type=instrument_type,
+                    pppc=pppc,
+                    quantity=qty,
+                    unrealized_return_pct=ret_pct,
+                )
+            )
 
     return out

@@ -159,11 +159,18 @@ class TradingAgentsGraph:
             ),
         }
 
-    def propagate(self, company_name, trade_date):
-        """Run the trading agents graph for a company on a specific date."""
+    def propagate(self, company_name, trade_date, portfolio_context=None):
+        """Run the trading agents graph for a company on a specific date.
+
+        ``portfolio_context`` is an optional dict with the caller's current
+        holding for this ticker (e.g. ``{"avg_cost": 42.5, "currency": "USD"}``).
+        When provided, the Trader and Risk Judge receive it in their prompts
+        so the decision is anchored on the existing position. Analysts and
+        Researchers do not see it, to keep their reports unbiased.
+        """
         self.ticker = company_name
         init_agent_state = self.propagator.create_initial_state(
-            company_name, trade_date
+            company_name, trade_date, portfolio_context=portfolio_context
         )
         args = self.propagator.get_graph_args()
 
@@ -184,16 +191,20 @@ class TradingAgentsGraph:
 
         return final_state, self.process_signal(final_state["final_trade_decision"])
 
-    async def propagate_async(self, company_name, trade_date, on_node=None):
+    async def propagate_async(
+        self, company_name, trade_date, on_node=None, portfolio_context=None
+    ):
         """Async variant that does not mutate instance state — safe for parallel use.
 
         If ``on_node`` is provided, it is called with each node name as the
         graph streams updates — enabling live progress dashboards. Final state
         is captured from the ``values`` stream so we do not need to invoke the
         graph twice.
+
+        ``portfolio_context`` — see :meth:`propagate`.
         """
         init_agent_state = self.propagator.create_initial_state(
-            company_name, trade_date
+            company_name, trade_date, portfolio_context=portfolio_context
         )
         args = self.propagator.get_graph_args()
 
@@ -231,6 +242,7 @@ class TradingAgentsGraph:
         trade_date,
         max_concurrency: int = 10,
         progress=None,
+        holdings: Dict[str, Dict[str, Any]] | None = None,
     ):
         """Run the pipeline for several tickers concurrently.
 
@@ -241,6 +253,11 @@ class TradingAgentsGraph:
         ``progress`` can be a ``PortfolioProgress`` instance — if provided,
         per-ticker start / node / finish events are forwarded so callers can
         render a live dashboard.
+
+        ``holdings`` maps ticker → portfolio_context dict (e.g.
+        ``{"NVDA": {"avg_cost": 123.4, "currency": "USD"}}``). The context for
+        each ticker is threaded into the Trader and Risk Judge prompts only.
+        Tickers missing from ``holdings`` simply run with no portfolio context.
         """
         from .portfolio import PortfolioResult  # local import to avoid cycle
 
@@ -256,9 +273,10 @@ class TradingAgentsGraph:
                     if progress is not None
                     else None
                 )
+                ctx = holdings.get(ticker) if holdings else None
                 try:
                     state, decision = await self.propagate_async(
-                        ticker, trade_date, on_node=on_node
+                        ticker, trade_date, on_node=on_node, portfolio_context=ctx
                     )
                     if progress is not None:
                         progress.finish(ticker, decision=decision)
@@ -316,6 +334,7 @@ class TradingAgentsGraph:
                 },
                 "investment_plan": final_state["investment_plan"],
                 "final_trade_decision": final_state["final_trade_decision"],
+                "portfolio_context": final_state.get("portfolio_context"),
             }
         }
         self.log_states_dict.setdefault(ticker, {}).update(log_entry)

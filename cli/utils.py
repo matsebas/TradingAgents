@@ -64,12 +64,44 @@ def parse_tickers_input(raw: str, types: Optional[List[str]] = None) -> List[str
     If the string is an existing file path, parse it as a positions CSV.
     Otherwise treat it as a comma-separated ticker list.
     """
+    tickers, _ = resolve_positions_input(raw, types=types)
+    return tickers
+
+
+def resolve_positions_input(
+    raw: str, types: Optional[List[str]] = None
+) -> Tuple[List[str], Dict[str, Dict[str, object]]]:
+    """Resolve user input into ``(tickers, holdings)``.
+
+    ``holdings`` is a mapping of ticker → ``portfolio_context`` dict ready to
+    be passed to :py:meth:`TradingAgentsGraph.propagate_portfolio`. It is
+    populated only when the input is a positions CSV and the rows carry a
+    ``pppc_mep`` column; otherwise the dict is empty.
+    """
     from tradingagents.dataflows.position_parser import parse_positions_csv
+
+    holdings: Dict[str, Dict[str, object]] = {}
 
     candidate = Path(raw).expanduser()
     if candidate.exists() and candidate.is_file():
         positions = parse_positions_csv(candidate, types=types)
         tickers = [p.ticker for p in positions]
+        for p in positions:
+            # Require at least one signal that's actually usable in a prompt.
+            if p.pppc is None and p.unrealized_return_pct is None and p.quantity is None:
+                continue
+            ctx: Dict[str, object] = {
+                "currency": "USD",  # pppc_mep is already MEP-USD
+                "instrument_type": p.instrument_type,
+            }
+            if p.pppc is not None:
+                ctx["avg_cost"] = p.pppc
+            if p.quantity is not None:
+                ctx["quantity"] = p.quantity
+            if p.unrealized_return_pct is not None:
+                # Store as fraction; the prompt formatter renders as %.
+                ctx["unrealized_return_pct"] = p.unrealized_return_pct
+            holdings[p.ticker] = ctx
     else:
         tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
 
@@ -80,7 +112,7 @@ def parse_tickers_input(raw: str, types: Optional[List[str]] = None) -> List[str
         if t and t not in seen:
             seen.add(t)
             out.append(t)
-    return out
+    return out, holdings
 
 
 def get_portfolio_date() -> str:

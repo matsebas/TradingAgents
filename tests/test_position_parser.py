@@ -108,3 +108,62 @@ def test_supports_comma_separator(tmp_path):
     )
     positions = parse_positions_csv(str(csv))
     assert [p.ticker for p in positions] == ["AAPL", "MSFT"]
+
+
+def test_parses_pppc_column_when_present(sample_csv_path):
+    positions = parse_positions_csv(sample_csv_path)
+    by_ticker = {p.ticker: p for p in positions}
+    # AMZN has pppc 1.5291... — positive, so we keep it.
+    assert by_ticker["AMZN"].pppc is not None
+    assert abs(by_ticker["AMZN"].pppc - 1.5291283721191364) < 1e-9
+    assert abs(by_ticker["NVDA"].pppc - 7.7248440614058710) < 1e-9
+
+
+def test_pppc_is_none_when_column_missing(tmp_path):
+    csv = tmp_path / "no_pppc.csv"
+    csv.write_text(
+        "descripcion_tipo_especie;abreviatura_instrumento\nCEDEARS;AAPL\n",
+        encoding="utf-8",
+    )
+    positions = parse_positions_csv(str(csv))
+    assert positions[0].pppc is None
+
+
+def test_pppc_zero_or_malformed_is_treated_as_unknown(tmp_path):
+    csv = tmp_path / "bad_pppc.csv"
+    csv.write_text(
+        "descripcion_tipo_especie;abreviatura_instrumento;pppc_mep\n"
+        "CEDEARS;AAPL;0.0\n"
+        "CEDEARS;MSFT;not-a-number\n"
+        "CEDEARS;GOOGL;\n",
+        encoding="utf-8",
+    )
+    positions = parse_positions_csv(str(csv))
+    assert all(p.pppc is None for p in positions)
+
+
+def test_parses_quantity_and_unrealized_return_pct(tmp_path):
+    csv = tmp_path / "full.csv"
+    csv.write_text(
+        "descripcion_tipo_especie;abreviatura_instrumento;total;pppc_mep;rendimiento_pct_mep\n"
+        "CEDEARS;SMH;263,0;8.12;0.2190\n"
+        "CEDEARS;AMZN;1,0;1.53;0.1987\n"
+        "CEDEARS;SPY;66,0;33.72;0.0941\n",
+        encoding="utf-8",
+    )
+    by_ticker = {p.ticker: p for p in parse_positions_csv(str(csv))}
+    assert by_ticker["SMH"].quantity == 263.0
+    assert by_ticker["AMZN"].quantity == 1.0
+    assert abs(by_ticker["SMH"].unrealized_return_pct - 0.219) < 1e-9
+    assert abs(by_ticker["SPY"].unrealized_return_pct - 0.0941) < 1e-9
+
+
+def test_quantity_and_return_pct_default_to_none_when_columns_missing(tmp_path):
+    csv = tmp_path / "narrow.csv"
+    csv.write_text(
+        "descripcion_tipo_especie;abreviatura_instrumento\nCEDEARS;AAPL\n",
+        encoding="utf-8",
+    )
+    p = parse_positions_csv(str(csv))[0]
+    assert p.quantity is None
+    assert p.unrealized_return_pct is None

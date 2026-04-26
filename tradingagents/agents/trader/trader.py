@@ -2,6 +2,8 @@ import functools
 import time
 import json
 
+from tradingagents.agents.utils.portfolio_context import format_portfolio_context
+
 
 def create_trader(llm, memory):
     def trader_node(state, name):
@@ -11,6 +13,9 @@ def create_trader(llm, memory):
         sentiment_report = state["sentiment_report"]
         news_report = state["news_report"]
         fundamentals_report = state["fundamentals_report"]
+        portfolio_block = format_portfolio_context(
+            state.get("portfolio_context"), company_name
+        )
 
         curr_situation = f"{market_research_report}\n\n{sentiment_report}\n\n{news_report}\n\n{fundamentals_report}"
         past_memories = memory.get_memories(curr_situation, n_matches=2)
@@ -22,9 +27,30 @@ def create_trader(llm, memory):
         else:
             past_memory_str = "No past memories found."
 
+        user_content = (
+            f"Based on a comprehensive analysis by a team of analysts, here is an "
+            f"investment plan tailored for {company_name}. This plan incorporates "
+            f"insights from current technical market trends, macroeconomic "
+            f"indicators, and social media sentiment. Use this plan as a "
+            f"foundation for evaluating your next trading decision.\n\n"
+            f"Proposed Investment Plan: {investment_plan}\n\n"
+        )
+        if portfolio_block:
+            user_content += (
+                f"{portfolio_block}\n\n"
+                "Ground your decision on this existing position. Use the "
+                "Unrealized P&L % as the ground-truth performance signal "
+                "(ratio-invariant). Consider: (a) sizing the action relative "
+                "to the current quantity held, (b) whether the thesis "
+                "justifies adding to a winner or averaging down a loser, and "
+                "(c) take-profit / stop-loss levels relative to the current "
+                "P&L, not absolute price levels.\n\n"
+            )
+        user_content += "Leverage these insights to make an informed and strategic decision."
+
         context = {
             "role": "user",
-            "content": f"Based on a comprehensive analysis by a team of analysts, here is an investment plan tailored for {company_name}. This plan incorporates insights from current technical market trends, macroeconomic indicators, and social media sentiment. Use this plan as a foundation for evaluating your next trading decision.\n\nProposed Investment Plan: {investment_plan}\n\nLeverage these insights to make an informed and strategic decision.",
+            "content": user_content,
         }
 
         messages = [

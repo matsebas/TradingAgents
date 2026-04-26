@@ -74,3 +74,12 @@ class AgentState(MessagesState):
         RiskDebateState, "Current state of the debate on evaluating risk"
     ]
     final_trade_decision: Annotated[str, "Final decision made by the Risk Analysts"]
+
+    # Optional portfolio context injected by the caller when running on a real
+    # portfolio. Consumed by the Trader and the Risk Judge to ground the
+    # decision in the existing position (e.g. weighted-average cost). Kept
+    # outside the analysts and researchers so their reports stay unbiased.
+    portfolio_context: Annotated[
+        Optional[dict],
+        "Current holding for this ticker: {avg_cost, currency, ...}",
+    ]

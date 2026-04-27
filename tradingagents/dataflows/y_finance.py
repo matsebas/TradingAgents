@@ -326,6 +326,92 @@ def get_income_statement(
         return f"Error retrieving income statement for {ticker}: {str(e)}"
 
 
+# Fields surfaced in the fundamentals summary. Order matters — same order
+# as the rendered output. Values are pulled from ``yfinance.Ticker.info``.
+_FUNDAMENTALS_FIELDS: tuple[tuple[str, str], ...] = (
+    ("Sector", "sector"),
+    ("Industry", "industry"),
+    ("Market Cap", "marketCap"),
+    ("Enterprise Value", "enterpriseValue"),
+    ("Trailing P/E", "trailingPE"),
+    ("Forward P/E", "forwardPE"),
+    ("PEG Ratio", "pegRatio"),
+    ("Price/Book", "priceToBook"),
+    ("Price/Sales (TTM)", "priceToSalesTrailing12Months"),
+    ("Profit Margin", "profitMargins"),
+    ("Operating Margin", "operatingMargins"),
+    ("Return on Equity", "returnOnEquity"),
+    ("Return on Assets", "returnOnAssets"),
+    ("Revenue (TTM)", "totalRevenue"),
+    ("Revenue Growth (YoY)", "revenueGrowth"),
+    ("Earnings Growth (YoY)", "earningsGrowth"),
+    ("EBITDA", "ebitda"),
+    ("Total Debt", "totalDebt"),
+    ("Debt/Equity", "debtToEquity"),
+    ("Current Ratio", "currentRatio"),
+    ("Free Cash Flow", "freeCashflow"),
+    ("Operating Cash Flow", "operatingCashflow"),
+    ("Dividend Yield", "dividendYield"),
+    ("Payout Ratio", "payoutRatio"),
+    ("Beta", "beta"),
+    ("52-Week High", "fiftyTwoWeekHigh"),
+    ("52-Week Low", "fiftyTwoWeekLow"),
+    ("Analyst Target Mean", "targetMeanPrice"),
+    ("Analyst Recommendation", "recommendationKey"),
+)
+
+
+def _format_fundamental(value):
+    if value is None:
+        return "n/a"
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int, float)):
+        # Magnitudes: market caps, revenues — render as 1.23T / 4.56B / 7.89M.
+        if abs(value) >= 1e12:
+            return f"{value / 1e12:.2f}T"
+        if abs(value) >= 1e9:
+            return f"{value / 1e9:.2f}B"
+        if abs(value) >= 1e6:
+            return f"{value / 1e6:.2f}M"
+        if isinstance(value, int):
+            return str(value)
+        return f"{value:.4f}".rstrip("0").rstrip(".")
+    return str(value)
+
+
+def get_fundamentals(
+    ticker: Annotated[str, "ticker symbol of the company"],
+    curr_date: Annotated[str, "current date (informational only)"] = None,
+):
+    """Render a fundamentals snapshot from yfinance ``Ticker.info``.
+
+    Free, no API key, no rate limit beyond yfinance's own — used as a
+    fallback when gemini's ``get_fundamentals`` hits its quota.
+    """
+    try:
+        info = yf.Ticker(ticker.upper()).info or {}
+    except Exception as e:  # noqa: BLE001
+        return f"Error retrieving fundamentals for {ticker}: {e}"
+
+    if not info or not info.get("symbol") and not info.get("shortName"):
+        return f"No fundamentals data found for symbol '{ticker}'"
+
+    name = info.get("longName") or info.get("shortName") or ticker.upper()
+    lines = [
+        f"## Fundamentals — {ticker.upper()} ({name})",
+        f"_Source: yfinance.Ticker.info; retrieved {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}._",
+        "",
+    ]
+    for label, key in _FUNDAMENTALS_FIELDS:
+        if key in info:
+            lines.append(f"- **{label}**: {_format_fundamental(info.get(key))}")
+    summary = info.get("longBusinessSummary")
+    if summary:
+        lines.extend(["", "### Business summary", str(summary).strip()])
+    return "\n".join(lines)
+
+
 def get_insider_transactions(
     ticker: Annotated[str, "ticker symbol of the company"]
 ):

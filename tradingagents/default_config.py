@@ -25,7 +25,7 @@ DEFAULT_CONFIG = {
     "data_vendors": {
         "core_stock_apis": "yfinance",       # Options: yfinance, alpha_vantage, local
         "technical_indicators": "yfinance",  # Options: yfinance, alpha_vantage, local
-        "fundamental_data": "gemini",        # Options: gemini, openai, alpha_vantage, local
+        "fundamental_data": "yfinance",      # Options: yfinance, gemini, openai, alpha_vantage, local
         "news_data": "google",               # Options: google, gemini, openai, alpha_vantage, local
     },
     # Tool-level configuration (takes precedence over category-level)

@@ -73,16 +73,30 @@ class TradingAgentsGraph:
             exist_ok=True,
         )
 
-        # Initialize LLMs
-        if self.config["llm_provider"].lower() == "openai" or self.config["llm_provider"] == "ollama" or self.config["llm_provider"] == "openrouter":
-            self.deep_thinking_llm = ChatOpenAI(model=self.config["deep_think_llm"], base_url=self.config["backend_url"])
-            self.quick_thinking_llm = ChatOpenAI(model=self.config["quick_think_llm"], base_url=self.config["backend_url"])
-        elif self.config["llm_provider"].lower() == "anthropic":
-            self.deep_thinking_llm = ChatAnthropic(model=self.config["deep_think_llm"], base_url=self.config["backend_url"])
-            self.quick_thinking_llm = ChatAnthropic(model=self.config["quick_think_llm"], base_url=self.config["backend_url"])
-        elif self.config["llm_provider"].lower() == "google":
+        # Initialize LLMs. ``analyst_llm`` and ``mechanical_llm`` are optional
+        # lighter-weight tiers; if a config doesn't define them they fall back
+        # to ``quick_think_llm`` so legacy configs keep working unchanged.
+        analyst_model = self.config.get("analyst_llm") or self.config["quick_think_llm"]
+        mechanical_model = self.config.get("mechanical_llm") or self.config["quick_think_llm"]
+
+        provider = self.config["llm_provider"].lower()
+        if provider in ("openai", "ollama", "openrouter"):
+            base_url = self.config["backend_url"]
+            self.deep_thinking_llm = ChatOpenAI(model=self.config["deep_think_llm"], base_url=base_url)
+            self.quick_thinking_llm = ChatOpenAI(model=self.config["quick_think_llm"], base_url=base_url)
+            self.analyst_llm = ChatOpenAI(model=analyst_model, base_url=base_url)
+            self.mechanical_llm = ChatOpenAI(model=mechanical_model, base_url=base_url)
+        elif provider == "anthropic":
+            base_url = self.config["backend_url"]
+            self.deep_thinking_llm = ChatAnthropic(model=self.config["deep_think_llm"], base_url=base_url)
+            self.quick_thinking_llm = ChatAnthropic(model=self.config["quick_think_llm"], base_url=base_url)
+            self.analyst_llm = ChatAnthropic(model=analyst_model, base_url=base_url)
+            self.mechanical_llm = ChatAnthropic(model=mechanical_model, base_url=base_url)
+        elif provider == "google":
             self.deep_thinking_llm = ChatGoogleGenerativeAI(model=self.config["deep_think_llm"])
             self.quick_thinking_llm = ChatGoogleGenerativeAI(model=self.config["quick_think_llm"])
+            self.analyst_llm = ChatGoogleGenerativeAI(model=analyst_model)
+            self.mechanical_llm = ChatGoogleGenerativeAI(model=mechanical_model)
         else:
             raise ValueError(f"Unsupported LLM provider: {self.config['llm_provider']}")
         
@@ -108,11 +122,14 @@ class TradingAgentsGraph:
             self.invest_judge_memory,
             self.risk_manager_memory,
             self.conditional_logic,
+            analyst_llm=self.analyst_llm,
         )
 
         self.propagator = Propagator()
-        self.reflector = Reflector(self.quick_thinking_llm)
-        self.signal_processor = SignalProcessor(self.quick_thinking_llm)
+        # Reflector + SignalProcessor are pure pattern extraction; the lighter
+        # mechanical_llm is enough and keeps Flash quota for the actual agents.
+        self.reflector = Reflector(self.mechanical_llm)
+        self.signal_processor = SignalProcessor(self.mechanical_llm)
 
         # State tracking
         self.curr_state = None

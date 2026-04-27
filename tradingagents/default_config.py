@@ -12,6 +12,13 @@ DEFAULT_CONFIG = {
     "llm_provider": "google",
     "deep_think_llm": "gemini-3-flash-preview",
     "quick_think_llm": "gemini-3-flash-preview",
+    # Lighter models for tasks that don't need full Flash:
+    # - analyst_llm: the 4 analysts (Market/Social/News/Fundamentals) which
+    #   mostly summarise tool output.
+    # - mechanical_llm: signal processor + reflector — pure pattern extraction.
+    # If unset, both fall back to quick_think_llm.
+    "analyst_llm": "gemini-3.1-flash-lite-preview",
+    "mechanical_llm": "gemini-3.1-flash-lite-preview",
     "backend_url": "https://api.openai.com/v1",  # Not used for Google provider
     # Gemini settings
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),

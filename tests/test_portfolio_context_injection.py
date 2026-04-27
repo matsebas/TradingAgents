@@ -88,6 +88,42 @@ def test_format_omits_cedear_warning_for_non_cedear():
     assert "NOT directly comparable" not in out
 
 
+def test_format_renders_role_with_guidance():
+    out = format_portfolio_context(
+        {"avg_cost": 33.0, "role": "anchor"}, "SPY"
+    )
+    assert "Position role: **anchor**" in out
+    assert "thesis change" in out.lower()
+    assert "absorb cycles" in out.lower()
+
+
+def test_format_role_speculative_directs_against_rsi_sells():
+    out = format_portfolio_context(
+        {"avg_cost": 3.96, "role": "speculative"}, "IBIT"
+    )
+    assert "Position role: **speculative**" in out
+    assert "thesis break" in out.lower()
+    assert "drawdowns" in out.lower()
+
+
+def test_format_role_tactical_uses_trailing_stop_framing():
+    out = format_portfolio_context(
+        {"avg_cost": 7.72, "role": "tactical"}, "NVDA"
+    )
+    assert "Position role: **tactical**" in out
+    assert "trailing" in out.lower()
+
+
+def test_format_unknown_role_renders_label_without_guidance():
+    out = format_portfolio_context(
+        {"avg_cost": 10.0, "role": "weirdrole"}, "X"
+    )
+    # The role label still surfaces, but no guidance line is emitted for
+    # unrecognised values.
+    assert "Position role: **weirdrole**" in out
+    assert "Decision guidance" not in out
+
+
 # --- prompt wiring -------------------------------------------------------
 
 
@@ -176,6 +212,29 @@ def test_risk_judge_prompt_contains_pppc_when_context_present():
     assert isinstance(llm.captured, str)
     assert "33.33" in llm.captured
     assert "Existing Position Context" in llm.captured
+
+
+def test_risk_judge_anchor_directive_blocks_rsi_sells():
+    from tradingagents.agents.managers.risk_manager import create_risk_manager
+
+    llm = _StubLLM()
+    judge = create_risk_manager(llm, _StubMemory())
+    judge(_minimal_state({"avg_cost": 33.0, "role": "anchor"}))
+    # The judge prompt must call out anchors and require a thesis change.
+    assert "anchors" in llm.captured.lower()
+    assert "structural" in llm.captured.lower()
+    assert "short-term yield" in llm.captured.lower()
+
+
+def test_trader_prompt_includes_role_directive():
+    from tradingagents.agents.trader.trader import create_trader
+
+    llm = _StubLLM()
+    trader = create_trader(llm, _StubMemory())
+    trader(_minimal_state({"avg_cost": 33.0, "role": "anchor"}))
+    user_msg = next(m for m in llm.captured if m["role"] == "user")
+    assert "anchors absorb cycles" in user_msg["content"].lower()
+    assert "thesis change" in user_msg["content"].lower()
 
 
 def test_risk_judge_prompt_has_no_portfolio_block_when_context_missing():

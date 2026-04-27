@@ -5,6 +5,30 @@ from __future__ import annotations
 from typing import Any, Mapping
 
 
+# Role-based decision guidance injected into Trader and Risk Judge prompts.
+# Keep these short — the goal is to bias the model's framing, not flood its
+# context.
+_ROLE_GUIDANCE: dict[str, str] = {
+    "anchor": (
+        "Anchor / structural core. Recommend SELL only on a thesis change "
+        "(regime shift, secular issue), NOT on technical extension or "
+        "RSI/Bollinger alone. On extended winners, HOLD with a raised stop "
+        "is preferred over a market sell — anchors absorb cycles in full."
+    ),
+    "tactical": (
+        "Tactical / single-name exposure. Standard BUY/SELL/HOLD logic. "
+        "On +20% winners, prefer trailing-stop discipline over market sells "
+        "to avoid ceding tail upside; size action relative to current qty."
+    ),
+    "speculative": (
+        "Speculative / high-convexity. Expect 30%+ drawdowns as normal. Do "
+        "NOT recommend SELL on momentary RSI/Bollinger touches; require a "
+        "thesis break (e.g. supply/demand shift, regulation) before exit. "
+        "Size discipline matters more than entry/exit timing."
+    ),
+}
+
+
 def _format_number(value: Any) -> str:
     if isinstance(value, bool):
         return str(value)
@@ -30,6 +54,9 @@ def format_portfolio_context(
     * ``unrealized_return_pct`` — fraction (e.g. ``0.219`` for +21.9%)
     * ``weight_pct`` — share of the portfolio (0-100)
     * ``instrument_type`` — e.g. ``"CEDEARS"`` (triggers a ratio warning)
+    * ``role`` — ``"anchor"`` / ``"tactical"`` / ``"speculative"``; renders
+      a short decision-bias snippet so the agent treats anchors structurally
+      and doesn't trim winners on momentary technical signals.
     * ``notes`` — free-form string
     """
     if not portfolio_context:
@@ -43,11 +70,14 @@ def format_portfolio_context(
     unrealized_pct = portfolio_context.get("unrealized_return_pct")
     weight_pct = portfolio_context.get("weight_pct")
     instrument_type = portfolio_context.get("instrument_type")
+    role = portfolio_context.get("role")
     notes = portfolio_context.get("notes")
 
     is_cedear = bool(instrument_type) and "cedear" in str(instrument_type).lower()
 
     lines: list[str] = [f"**Current Portfolio Position — {ticker}**"]
+    if role:
+        lines.append(f"- Position role: **{role}**")
     if unrealized_pct is not None:
         sign = "+" if unrealized_pct >= 0 else ""
         lines.append(
@@ -66,6 +96,10 @@ def format_portfolio_context(
         lines.append(f"- Instrument type: {instrument_type}")
     if notes:
         lines.append(f"- Notes: {notes}")
+
+    role_guidance = _ROLE_GUIDANCE.get(role) if role else None
+    if role_guidance:
+        lines.append(f"- Decision guidance for **{role}**: {role_guidance}")
 
     if is_cedear and avg_cost is not None:
         lines.append(

@@ -29,9 +29,15 @@ def create_risk_manager(llm, memory):
 
         portfolio_section = (
             f"\n\n---\n\n**Existing Position Context:**\n{portfolio_block}\n\n"
-            "Anchor the final call on this: compare current market price vs. "
-            "the weighted-average cost, consider unrealized P&L, and size the "
-            "action relative to the current holding."
+            "Anchor the final call on this. The position role is binding: "
+            "for anchors, recommend SELL only on a structural thesis change, "
+            "NOT on RSI/Bollinger extensions; for speculative names, tolerate "
+            "drawdowns and only exit on thesis break; for tactical names, "
+            "use trailing-stop framing on extended winners rather than market "
+            "sells. Compare current price vs. weighted-average cost, weight "
+            "unrealized P&L, and size the action relative to the current "
+            "holding — never recommend trimming a structural anchor for "
+            "short-term yield capture."
             if portfolio_block
             else ""
         )

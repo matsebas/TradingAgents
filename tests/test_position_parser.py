@@ -201,3 +201,29 @@ def test_summarize_flags_missing_type_column(tmp_path):
     summary = summarize_positions_csv(str(csv))
     assert summary["total_rows"] == 1
     assert summary["has_type_column"] is False
+
+
+def test_classifies_anchor_speculative_and_tactical_roles(sample_csv_path):
+    by_ticker = {p.ticker: p for p in parse_positions_csv(sample_csv_path)}
+    # Sample fixture has AMZN/NVDA (single names → tactical) and IBIT
+    # (crypto ETF → speculative).
+    assert by_ticker["AMZN"].role == "tactical"
+    assert by_ticker["NVDA"].role == "tactical"
+    assert by_ticker["IBIT"].role == "speculative"
+
+
+def test_anchor_classification_for_broad_etfs(tmp_path):
+    csv = tmp_path / "anchors.csv"
+    csv.write_text(
+        "descripcion_tipo_especie;abreviatura_instrumento\n"
+        "CEDEARS;SPY\n"
+        "CEDEARS;QQQ\n"
+        "CEDEARS;NVDA\n"
+        "CEDEARS;IBIT\n",
+        encoding="utf-8",
+    )
+    by_ticker = {p.ticker: p for p in parse_positions_csv(str(csv))}
+    assert by_ticker["SPY"].role == "anchor"
+    assert by_ticker["QQQ"].role == "anchor"
+    assert by_ticker["NVDA"].role == "tactical"
+    assert by_ticker["IBIT"].role == "speculative"

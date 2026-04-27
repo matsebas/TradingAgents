@@ -29,6 +29,45 @@ QUANTITY_COLUMN = "total"  # number of units held (CEDEARs / shares / etc.)
 RETURN_PCT_COLUMN = "rendimiento_pct_mep"
 
 
+# Broad-market ETFs that act as structural anchors in a portfolio. Selling
+# these on technical extension alone is a fiduciary mistake; prompts should
+# require a thesis change before recommending exit.
+_ANCHOR_TICKERS: frozenset[str] = frozenset(
+    {
+        "SPY", "IVV", "VOO", "VTI", "ITOT",          # US broad
+        "QQQ", "DIA", "IWM",                          # Style/cap tilts
+        "EFA", "VEA", "IEMG", "VWO",                  # International equity
+        "AGG", "BND", "TLT", "LQD", "IEF", "SHY",     # Fixed income
+    }
+)
+
+# High-convexity / asymmetric exposures: tolerate larger drawdowns and don't
+# react to RSI extremes; only exit on a thesis break.
+_SPECULATIVE_TICKERS: frozenset[str] = frozenset(
+    {
+        "IBIT", "BITB", "FBTC", "ARKB", "GBTC",       # BTC ETFs
+        "ETHV", "ETHA", "FETH",                       # ETH ETFs
+        "MSTR",                                       # Crypto-leveraged proxy
+        "ARKK",                                       # Innovation high-beta
+    }
+)
+
+
+def _classify_role(ticker: str) -> str:
+    """Heuristic role classification used by the Trader and Risk Judge.
+
+    Returns one of ``"anchor"``, ``"tactical"``, ``"speculative"``. The
+    classification can be overridden downstream by setting ``role`` directly
+    on the ``portfolio_context`` dict.
+    """
+    t = (ticker or "").strip().upper()
+    if t in _ANCHOR_TICKERS:
+        return "anchor"
+    if t in _SPECULATIVE_TICKERS:
+        return "speculative"
+    return "tactical"
+
+
 @dataclass(frozen=True)
 class ParsedPosition:
     ticker: str
@@ -36,6 +75,7 @@ class ParsedPosition:
     pppc: float | None = None  # weighted-average purchase price (in row currency)
     quantity: float | None = None
     unrealized_return_pct: float | None = None  # fraction, not percent points
+    role: str | None = None  # anchor | tactical | speculative
 
 
 def _parse_number(raw: str | None) -> float | None:
@@ -127,6 +167,7 @@ def parse_positions_csv(
                     pppc=pppc,
                     quantity=qty,
                     unrealized_return_pct=ret_pct,
+                    role=_classify_role(ticker),
                 )
             )
 

@@ -101,6 +101,8 @@ def resolve_positions_input(
             if p.unrealized_return_pct is not None:
                 # Store as fraction; the prompt formatter renders as %.
                 ctx["unrealized_return_pct"] = p.unrealized_return_pct
+            if p.role is not None:
+                ctx["role"] = p.role
             holdings[p.ticker] = ctx
     else:
         tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]

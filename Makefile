@@ -7,7 +7,9 @@ POSITIONS ?=
 TICKERS ?=
 DATE ?=
 TYPES ?= CEDEARS
-MAX_CONCURRENCY ?= 10
+# 5 keeps Gemini under its per-minute quota for typical 5-10 ticker portfolios.
+# Bump only with a higher-tier key — concurrency=10 has hit 429s in practice.
+MAX_CONCURRENCY ?= 5
 
 .PHONY: cli cli-tab install test test-all portfolio portfolio-positions portfolio-tickers portfolio-example help
 

@@ -13,6 +13,7 @@ correct security.
 from __future__ import annotations
 
 import csv
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -130,3 +131,44 @@ def parse_positions_csv(
             )
 
     return out
+
+
+def summarize_positions_csv(path: str | Path) -> dict:
+    """Return diagnostics about a positions CSV without applying the type filter.
+
+    Used by the CLI to produce a helpful error when ``parse_positions_csv``
+    returns nothing (e.g. the file only contains ``Fondos`` but the user
+    passed ``--types CEDEARS``). Result schema::
+
+        {
+            "total_rows": int,
+            "rows_by_type": {type_label: count, ...},
+            "has_type_column": bool,
+        }
+    """
+    csv_path = Path(path)
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Positions file not found: {csv_path}")
+
+    with csv_path.open("r", encoding="utf-8") as f:
+        sample = f.read(4096)
+        f.seek(0)
+        sep = _detect_separator(sample)
+        reader = csv.DictReader(f, delimiter=sep)
+
+        fieldnames = reader.fieldnames or ()
+        has_type_column = TYPE_COLUMN in fieldnames
+
+        counts: Counter[str] = Counter()
+        total = 0
+        for row in reader:
+            total += 1
+            if has_type_column:
+                t = (row.get(TYPE_COLUMN, "") or "").strip() or "(blank)"
+                counts[t] += 1
+
+    return {
+        "total_rows": total,
+        "rows_by_type": dict(counts),
+        "has_type_column": has_type_column,
+    }

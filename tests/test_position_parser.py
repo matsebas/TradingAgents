@@ -12,6 +12,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from tradingagents.dataflows.position_parser import (
     ParsedPosition,
     parse_positions_csv,
+    summarize_positions_csv,
 )
 
 
@@ -167,3 +168,36 @@ def test_quantity_and_return_pct_default_to_none_when_columns_missing(tmp_path):
     p = parse_positions_csv(str(csv))[0]
     assert p.quantity is None
     assert p.unrealized_return_pct is None
+
+
+def test_summarize_reports_row_counts_by_type(sample_csv_path):
+    summary = summarize_positions_csv(sample_csv_path)
+    assert summary["total_rows"] == 6
+    assert summary["has_type_column"] is True
+    # Three CEDEARS rows in the fixture (NVDA appears twice), one Fondos, one
+    # Bonos.
+    by_type = summary["rows_by_type"]
+    assert by_type["CEDEARS"] == 4
+    assert by_type["Fondos"] == 1
+    assert by_type["Bonos"] == 1
+
+
+def test_summarize_handles_empty_csv(tmp_path):
+    csv = tmp_path / "empty.csv"
+    csv.write_text(
+        "descripcion_tipo_especie;abreviatura_instrumento\n", encoding="utf-8"
+    )
+    summary = summarize_positions_csv(str(csv))
+    assert summary["total_rows"] == 0
+    assert summary["rows_by_type"] == {}
+    assert summary["has_type_column"] is True
+
+
+def test_summarize_flags_missing_type_column(tmp_path):
+    csv = tmp_path / "no_type.csv"
+    csv.write_text(
+        "abreviatura_instrumento;total\nAAPL;100\n", encoding="utf-8"
+    )
+    summary = summarize_positions_csv(str(csv))
+    assert summary["total_rows"] == 1
+    assert summary["has_type_column"] is False

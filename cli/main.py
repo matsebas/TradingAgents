@@ -1197,6 +1197,55 @@ def run_analysis():
         update_display(layout)
 
 
+def _no_tickers_message(raw_input: Optional[str], requested_types: list[str]) -> str:
+    """Build a contextual error string for the empty-result case.
+
+    When the input is a CSV path, peek at the file to report row counts by
+    instrument type so the user can tell whether the filter was wrong, the
+    file was empty, or the column layout is off.
+    """
+    fallback = (
+        "[red]No tickers resolved from input. "
+        "Check --types and file contents.[/red]"
+    )
+    if not raw_input:
+        return fallback
+    candidate = Path(raw_input).expanduser()
+    if not (candidate.exists() and candidate.is_file()):
+        # Raw ticker list — no extra introspection possible.
+        return fallback
+
+    from tradingagents.dataflows.position_parser import summarize_positions_csv
+
+    try:
+        summary = summarize_positions_csv(candidate)
+    except Exception as exc:  # noqa: BLE001
+        return f"{fallback}\n[dim]Could not introspect CSV: {exc}[/dim]"
+
+    total = summary["total_rows"]
+    types_present = summary["rows_by_type"]
+    requested = ", ".join(requested_types) or "(none)"
+
+    if total == 0:
+        return (
+            f"[red]No tickers resolved.[/red] CSV [yellow]{candidate}[/yellow] "
+            "has 0 data rows."
+        )
+    if not summary["has_type_column"]:
+        return (
+            f"[red]No tickers resolved.[/red] CSV has {total} rows but no "
+            "[yellow]descripcion_tipo_especie[/yellow] column to filter on."
+        )
+    types_str = ", ".join(f"{t}={n}" for t, n in types_present.items())
+    return (
+        f"[red]No tickers resolved.[/red] CSV has {total} row(s); types "
+        f"present: [yellow]{types_str}[/yellow]. Requested types: "
+        f"[yellow]{requested}[/yellow].\n"
+        "[dim]Re-run with --types matching what's in the file, "
+        "or pass --tickers explicitly.[/dim]"
+    )
+
+
 @app.command()
 def analyze():
     run_analysis()
@@ -1258,9 +1307,7 @@ def portfolio(
         resolved, holdings = resolve_positions_input(raw.strip(), types=type_list)
 
     if not resolved:
-        console.print(
-            "[red]No tickers resolved from input. Check --types and file contents.[/red]"
-        )
+        console.print(_no_tickers_message(positions or tickers, type_list))
         raise typer.Exit(code=1)
 
     trade_date = analysis_date or get_portfolio_date()

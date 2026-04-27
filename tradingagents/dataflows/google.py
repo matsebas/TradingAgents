@@ -1,7 +1,8 @@
+from datetime import timedelta
 from typing import Annotated
 
 from .googlenews_utils import getNewsData
-from .utils import normalize_date
+from .utils import normalize_date, parse_date
 
 
 def get_google_news(
@@ -30,4 +31,39 @@ def get_google_news(
     )
     return (
         f"## {query} Google News, from {start_date} to {end_date}:\n\n{news_str}"
+    )
+
+
+# Generic query used for the global-news call. Broad enough to surface
+# market-moving macro headlines across asset classes.
+_GLOBAL_NEWS_QUERY = "global markets macroeconomics financial news"
+
+
+def get_global_news_google(
+    curr_date: Annotated[str, "Current date in yyyy-mm-dd format"],
+    look_back_days: Annotated[int, "Number of days to look back"] = 7,
+    limit: Annotated[int, "Maximum number of articles to return"] = 5,
+) -> str:
+    """Scrape Google News for global macro headlines in the last ``look_back_days``.
+
+    Signature mirrors :func:`get_global_news_gemini` /
+    :func:`get_global_news_openai` so the router can swap them.
+    """
+    end_date = normalize_date(curr_date, field_name="curr_date")
+    start = parse_date(end_date) - timedelta(days=int(look_back_days))
+    start_date = start.strftime("%Y-%m-%d")
+
+    news_results = getNewsData(
+        _GLOBAL_NEWS_QUERY.replace(" ", "+"), start_date, end_date
+    )
+    if not news_results:
+        return ""
+
+    selected = news_results[: int(limit)]
+    body = "".join(
+        f"### {n['title']} (source: {n['source']}) \n\n{n['snippet']}\n\n"
+        for n in selected
+    )
+    return (
+        f"## Global Markets News, from {start_date} to {end_date}:\n\n{body}"
     )

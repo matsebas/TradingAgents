@@ -1,6 +1,7 @@
 # TradingAgents/graph/trading_graph.py
 
 import asyncio
+import copy
 import json
 import os
 import time
@@ -22,7 +23,11 @@ from tradingagents.agents.utils.agent_states import (
     InvestDebateState,
     RiskDebateState,
 )
+from tradingagents.agents.utils.portfolio_aggregate import (
+    compute_portfolio_aggregate,
+)
 from tradingagents.dataflows.config import set_config
+from tradingagents.dataflows.previous_decision import load_previous_decision
 
 # Import the new abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
@@ -43,6 +48,32 @@ from .setup import GraphSetup
 from .propagation import Propagator
 from .reflection import Reflector
 from .signal_processing import SignalProcessor
+
+
+def _augment_portfolio_context(
+    base_ctx: Optional[Dict[str, Any]],
+    ticker: str,
+    trade_date: str,
+    portfolio_aggregate: Optional[Dict[str, Any]],
+    *,
+    reports_dir: str = "reports",
+) -> Optional[Dict[str, Any]]:
+    """Inject portfolio-level fields into a per-ticker context dict.
+
+    Adds ``portfolio_aggregate`` (the same precomputed dict for every ticker)
+    and ``previous_decision`` (per-ticker, read from disk). Returns the
+    augmented dict, or ``None`` if there's nothing to inject and ``base_ctx``
+    was also ``None``.
+    """
+    augmented: Dict[str, Any] = dict(base_ctx) if base_ctx else {}
+    if portfolio_aggregate is not None:
+        # Deep-copy so concurrent ticker runs can't accidentally corrupt the
+        # shared aggregate by mutating nested dicts/lists in-place.
+        augmented["portfolio_aggregate"] = copy.deepcopy(portfolio_aggregate)
+    prev = load_previous_decision(ticker, trade_date, reports_dir=reports_dir)
+    if prev is not None:
+        augmented["previous_decision"] = prev.to_dict()
+    return augmented if augmented else None
 
 
 class TradingAgentsGraph:
@@ -280,6 +311,12 @@ class TradingAgentsGraph:
 
         semaphore = asyncio.Semaphore(max_concurrency)
 
+        # Compute portfolio-level aggregates ONCE per run, so every ticker's
+        # Risk Judge sees the same whole-book view. None when holdings lack
+        # qty + avg_cost (e.g. ticker-list mode without positions CSV).
+        portfolio_agg = compute_portfolio_aggregate(holdings)
+        agg_dict = portfolio_agg.to_dict() if portfolio_agg is not None else None
+
         async def run_one(ticker: str) -> "PortfolioResult":
             start = time.perf_counter()
             async with semaphore:
@@ -290,7 +327,10 @@ class TradingAgentsGraph:
                     if progress is not None
                     else None
                 )
-                ctx = holdings.get(ticker) if holdings else None
+                base_ctx = holdings.get(ticker) if holdings else None
+                ctx = _augment_portfolio_context(
+                    base_ctx, ticker, trade_date, agg_dict
+                )
                 try:
                     state, decision = await self.propagate_async(
                         ticker, trade_date, on_node=on_node, portfolio_context=ctx
@@ -352,6 +392,9 @@ class TradingAgentsGraph:
                 "investment_plan": final_state["investment_plan"],
                 "final_trade_decision": final_state["final_trade_decision"],
                 "portfolio_context": final_state.get("portfolio_context"),
+                "trade_decision_structured": final_state.get(
+                    "trade_decision_structured"
+                ),
             }
         }
         self.log_states_dict.setdefault(ticker, {}).update(log_entry)
@@ -363,7 +406,9 @@ class TradingAgentsGraph:
             directory / f"full_states_log_{trade_date}.json",
             "w",
         ) as f:
-            json.dump(log_entry, f, indent=4)
+            # default=str so Decimal / date / numpy scalars from caller-supplied
+            # holdings dicts don't crash the dump and orphan the entire run.
+            json.dump(log_entry, f, indent=4, default=str)
 
     def reflect_and_remember(self, returns_losses, state=None):
         """Reflect on decisions and update memory based on returns.

@@ -124,6 +124,108 @@ def test_format_unknown_role_renders_label_without_guidance():
     assert "Decision guidance" not in out
 
 
+# --- portfolio_aggregate rendering ---------------------------------------
+
+
+def test_format_renders_portfolio_aggregate_block():
+    agg = {
+        "total_positions": 3,
+        "by_role": {
+            "anchor": {
+                "count": 1,
+                "cost_basis_weight_pct": 50.0,
+                "avg_unrealized_return_pct": 0.10,
+                "tickers": ["SPY"],
+            },
+            "tactical": {
+                "count": 2,
+                "cost_basis_weight_pct": 50.0,
+                "avg_unrealized_return_pct": 0.20,
+                "tickers": ["NVDA", "AMZN"],
+            },
+        },
+        "top_concentrations": [["SPY", 50.0], ["NVDA", 30.0], ["AMZN", 20.0]],
+    }
+    out = format_portfolio_context(
+        {"avg_cost": 100.0, "role": "anchor", "portfolio_aggregate": agg},
+        "SPY",
+    )
+    assert "Portfolio-Level Context" in out
+    assert "Total positions: 3" in out
+    assert "anchor" in out and "tactical" in out
+    # Bucket lines should show counts and weights.
+    assert "1 positions" in out
+    assert "50.0%" in out
+    # P&L per bucket appears with a sign.
+    assert "+10.00%" in out and "+20.00%" in out
+    # Top concentrations line.
+    assert "SPY 50.0%" in out
+    # The whole-book directive must be present.
+    assert "concentration past target" in out
+
+
+def test_format_omits_portfolio_aggregate_when_missing():
+    out = format_portfolio_context(
+        {"avg_cost": 100.0, "role": "anchor"}, "SPY"
+    )
+    assert "Portfolio-Level Context" not in out
+
+
+def test_format_aggregate_handles_dataclass_input():
+    from tradingagents.agents.utils.portfolio_aggregate import (
+        compute_portfolio_aggregate,
+    )
+
+    holdings = {
+        "SPY": {"quantity": 10, "avg_cost": 100, "role": "anchor"},
+        "NVDA": {"quantity": 5, "avg_cost": 100, "role": "tactical"},
+    }
+    agg_obj = compute_portfolio_aggregate(holdings)
+    assert agg_obj is not None
+
+    # Pass the dataclass directly — format_portfolio_context should use to_dict().
+    out = format_portfolio_context(
+        {"avg_cost": 100, "role": "anchor", "portfolio_aggregate": agg_obj},
+        "SPY",
+    )
+    assert "Portfolio-Level Context" in out
+    assert "anchor" in out and "tactical" in out
+
+
+# --- previous_decision rendering -----------------------------------------
+
+
+def test_format_renders_previous_decision_with_stability_directive():
+    out = format_portfolio_context(
+        {
+            "avg_cost": 100.0,
+            "role": "anchor",
+            "previous_decision": {
+                "ticker": "SPY",
+                "decision": "SELL",
+                "date": "2026-04-17",
+                "days_ago": 11,
+            },
+        },
+        "SPY",
+    )
+    assert "Previous Decision" in out
+    assert "SELL" in out
+    assert "2026-04-17" in out
+    assert "11 days ago" in out
+    # The stability directive must require structural reasoning to flip.
+    assert "MUST cite a structural change" in out
+    assert "RSI/MACD/Bollinger" in out
+
+
+def test_format_omits_previous_decision_when_missing():
+    out = format_portfolio_context(
+        {"avg_cost": 100.0, "role": "anchor"}, "SPY"
+    )
+    assert "Previous Decision" not in out
+    assert "previous decision" not in out.lower()
+
+
 # --- prompt wiring -------------------------------------------------------
 
 
@@ -211,7 +313,7 @@ def test_risk_judge_prompt_contains_pppc_when_context_present():
     # Risk manager calls llm.invoke(prompt_string) directly.
     assert isinstance(llm.captured, str)
     assert "33.33" in llm.captured
-    assert "Existing Position Context" in llm.captured
+    assert "Portfolio Context (binding rules)" in llm.captured
 
 
 def test_risk_judge_anchor_directive_blocks_rsi_sells():
@@ -224,6 +326,47 @@ def test_risk_judge_anchor_directive_blocks_rsi_sells():
     assert "anchors" in llm.captured.lower()
     assert "structural" in llm.captured.lower()
     assert "short-term yield" in llm.captured.lower()
+
+
+def test_risk_judge_prompt_requires_entry_and_exit_triggers():
+    from tradingagents.agents.managers.risk_manager import create_risk_manager
+
+    llm = _StubLLM()
+    judge = create_risk_manager(llm, _StubMemory())
+    judge(_minimal_state({"avg_cost": 100.0, "role": "tactical"}))
+
+    # Both triggers must be required, regardless of recommendation direction.
+    assert "Entry Trigger" in llm.captured
+    assert "Exit Trigger" in llm.captured
+    assert "Falsification Criteria" in llm.captured
+
+
+def test_risk_judge_prompt_requires_previous_decision_consistency_check():
+    from tradingagents.agents.managers.risk_manager import create_risk_manager
+
+    llm = _StubLLM()
+    judge = create_risk_manager(llm, _StubMemory())
+    judge(
+        _minimal_state(
+            {
+                "avg_cost": 100.0,
+                "role": "anchor",
+                "previous_decision": {
+                    "ticker": "SPY",
+                    "decision": "SELL",
+                    "date": "2026-04-17",
+                    "days_ago": 11,
+                },
+            }
+        )
+    )
+    # The previous-decision context surfaces in the prompt.
+    assert "Previous Decision" in llm.captured
+    assert "2026-04-17" in llm.captured
+    # The structured Consistency Check section is required.
+    assert "Previous-Decision Consistency Check" in llm.captured
+    # Flipping must require a structural reason (not technical alone).
+    assert "STRUCTURAL change" in llm.captured or "structural change" in llm.captured.lower()
 
 
 def test_trader_prompt_includes_role_directive():

@@ -83,3 +83,11 @@ class AgentState(MessagesState):
         Optional[dict],
         "Current holding for this ticker: {avg_cost, currency, ...}",
     ]
+
+    # Structured form of the Risk Judge's final decision (validated against
+    # the role-discipline gates). Populated as a dict (TradeDecision.model_dump)
+    # for JSON-serialisability through the LangGraph state.
+    trade_decision_structured: Annotated[
+        Optional[dict],
+        "Structured Risk Judge decision (TradeDecision schema)",
+    ]

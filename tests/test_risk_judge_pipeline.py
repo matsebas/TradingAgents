@@ -13,7 +13,10 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from tradingagents.agents.managers.risk_manager import create_risk_manager
+from tradingagents.agents.managers.risk_manager import (
+    _content_to_text,
+    create_risk_manager,
+)
 
 
 class _ScriptedLLM:
@@ -99,6 +102,45 @@ def _valid_json_response(decision="HOLD", **overrides):
     return body, payload
 
 
+# --- _content_to_text ----------------------------------------------------
+
+
+def test_content_to_text_passes_string_through():
+    assert _content_to_text("hello") == "hello"
+
+
+def test_content_to_text_handles_none():
+    assert _content_to_text(None) == ""
+
+
+def test_content_to_text_flattens_list_of_text_blocks():
+    blocks = [
+        {"type": "text", "text": "first part"},
+        {"type": "text", "text": "second part"},
+    ]
+    out = _content_to_text(blocks)
+    assert "first part" in out
+    assert "second part" in out
+
+
+def test_content_to_text_skips_thinking_blocks():
+    blocks = [
+        {"type": "thinking", "text": "private reasoning that should not leak"},
+        {"type": "text", "text": "the public answer"},
+    ]
+    out = _content_to_text(blocks)
+    assert "private reasoning" not in out
+    assert "the public answer" in out
+
+
+def test_content_to_text_handles_strings_in_list():
+    out = _content_to_text(["a", "b"])
+    assert "a" in out and "b" in out
+
+
+# --- pipeline ------------------------------------------------------------
+
+
 def test_valid_json_is_accepted_first_try():
     body, payload = _valid_json_response()
     llm = _ScriptedLLM([body])
@@ -167,6 +209,39 @@ def test_no_json_block_auto_downgrades_to_hold():
     assert structured["decision"] == "HOLD"
     assert "AUTO-DOWNGRADED" in result["final_trade_decision"]
     assert "no JSON" in result["final_trade_decision"] or "no fenced" in result["final_trade_decision"].lower()
+
+
+def test_judge_handles_gemini3_list_content():
+    """Regression: Gemini 3 Flash returns ``response.content`` as a list of
+    content blocks (not a string), which used to crash regex parsing in the
+    validator with `TypeError: expected string or bytes-like object`."""
+    body, _ = _valid_json_response()
+    # Wrap the body in a list-of-blocks like Gemini 3 does.
+    blocks = [
+        {"type": "thinking", "text": "internal reasoning, hidden"},
+        {"type": "text", "text": body},
+    ]
+
+    class _BlockLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def invoke(self, _):
+            self.calls += 1
+
+            class _Msg:
+                content = blocks
+
+            return _Msg()
+
+    llm = _BlockLLM()
+    judge = create_risk_manager(llm, _StubMemory())
+
+    result = judge(_state({"avg_cost": 100, "role": "tactical"}))
+
+    # No crash, JSON extracted, decision validated.
+    assert llm.calls == 1
+    assert result["trade_decision_structured"]["decision"] == "HOLD"
 
 
 def test_persistent_contradiction_is_auto_downgraded():

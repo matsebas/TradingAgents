@@ -166,13 +166,28 @@ def validate_decision(
         pnl_f = None
 
     # --- Cross-run continuity ---
+    # Derive is_flip from the actual decision values rather than trusting the
+    # LLM's self-report. The model can (and has) emitted ``is_flip: false``
+    # while changing decisions — that bypasses the structural-reason gate.
     prev = decision.previous_decision
-    if prev.is_flip and prev.previous_decision is not None:
+    actual_is_flip = (
+        prev.previous_decision is not None
+        and prev.previous_decision != decision.decision
+    )
+    if actual_is_flip:
         if _is_technical_only(prev.structural_reason):
             issues.append(
-                "Flip vs previous_decision is justified only by technical "
-                "oscillators — binding rules require a STRUCTURAL reason "
+                "Flip vs previous_decision "
+                f"({prev.previous_decision} → {decision.decision}) is justified "
+                "only by technical oscillators or no real reason — binding "
+                "rules require a STRUCTURAL reason "
                 "(regime / fundamental / role reclass)."
+            )
+        if not prev.is_flip:
+            issues.append(
+                "Decision differs from previous_decision but is_flip=false — "
+                "the structured output must declare is_flip=true so the "
+                "structural-reason gate applies."
             )
 
     # --- BUY requires entry_plan ---

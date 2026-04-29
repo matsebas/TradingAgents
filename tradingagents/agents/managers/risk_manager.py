@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 from tradingagents.agents.managers.decision_validator import (
     auto_downgrade_to_hold,
@@ -6,6 +7,38 @@ from tradingagents.agents.managers.decision_validator import (
     validate_decision,
 )
 from tradingagents.agents.utils.portfolio_context import format_portfolio_context
+
+
+def _content_to_text(content: Any) -> str:
+    """Flatten BaseMessage.content into a plain string.
+
+    Gemini 3 family models (and other reasoning models) can return ``.content``
+    as a list of content blocks like ``[{"type":"text","text":"..."}, ...]``
+    or with ``thinking`` parts, instead of a flat string. Regex / string-concat
+    over that raw structure raises ``TypeError: expected string or bytes-like
+    object``. This helper joins the visible-text parts into a single string
+    so downstream parsing works regardless of provider.
+    """
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, str):
+                parts.append(block)
+            elif isinstance(block, dict):
+                # Skip thinking / tool-call blocks; keep visible text.
+                btype = block.get("type")
+                if btype in ("thinking", "tool_use", "tool_result"):
+                    continue
+                if "text" in block and block["text"] is not None:
+                    parts.append(str(block["text"]))
+                elif "content" in block and block["content"] is not None:
+                    parts.append(str(block["content"]))
+        return "\n".join(parts)
+    if content is None:
+        return ""
+    return str(content)
 
 
 _STRUCTURED_OUTPUT_INSTRUCTIONS = '''
@@ -147,7 +180,7 @@ Adjust the trader's original plan ({trader_plan}) accordingly. Include trailing-
 Be decisive but disciplined. HOLD is a valid answer when the role guidance demands it — do not force a BUY/SELL when discipline says HOLD. Your reasoning must engage with the binding rules, not work around them."""
 
         response = llm.invoke(prompt)
-        response_text = response.content
+        response_text = _content_to_text(response.content)
 
         # --- Validate the structured JSON block at the end of the response. ---
         parsed = extract_decision_json(response_text)
@@ -174,7 +207,7 @@ Be decisive but disciplined. HOLD is a valid answer when the role guidance deman
                 "the schema. Re-emit the FULL response (sections 1-9)."
             )
             retry_response = llm.invoke(retry_prompt)
-            response_text = retry_response.content
+            response_text = _content_to_text(retry_response.content)
             parsed = extract_decision_json(response_text)
             if parsed is not None:
                 outcome = validate_decision(parsed, portfolio_context=portfolio_ctx)

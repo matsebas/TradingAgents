@@ -180,6 +180,27 @@ def test_flip_with_long_non_keyword_reason_passes():
     assert outcome.ok
 
 
+def test_lying_is_flip_is_overridden_when_decisions_differ():
+    """Regression: an LLM emitted is_flip=false while changing SELL→HOLD,
+    bypassing the structural-reason gate. The validator must derive is_flip
+    from the actual values and reject this."""
+    payload = _valid_payload(
+        decision="HOLD",
+        previous_decision={
+            "previous_date": "2026-04-27",
+            "previous_decision": "SELL",
+            "is_flip": False,  # LLM lying
+            "structural_reason": None,
+        },
+    )
+    outcome = validate_decision(payload, portfolio_context={"role": "anchor"})
+    assert not outcome.ok
+    issues = " ".join(outcome.issues).lower()
+    # Must catch BOTH issues: missing structural reason AND mis-declared is_flip.
+    assert "is_flip=false" in issues or "is_flip=true" in issues
+    assert "structural" in issues
+
+
 def test_continuing_previous_decision_does_not_require_reason():
     payload = _valid_payload(
         previous_decision={

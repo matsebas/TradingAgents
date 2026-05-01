@@ -18,6 +18,10 @@ CASH ?=
 # Required only when CASH includes ARS.
 ARS_MEP_RATE ?=
 ARS_CABLE_RATE ?=
+# Broker capabilities override. Comma-separated subset of: gtd, stop_loss, bracket.
+# Default in config is "gtd" — set this to override (e.g. "gtd,stop_loss,bracket"
+# for brokers with full feature set).
+BROKER_FEATURES ?=
 
 .PHONY: cli cli-tab install test test-all portfolio portfolio-positions portfolio-tickers portfolio-example help
 
@@ -60,7 +64,8 @@ portfolio-positions:
 	    $(if $(CANDIDATES),--candidates "$(CANDIDATES)",) \
 	    $(if $(CASH),--cash "$(CASH)",) \
 	    $(if $(ARS_MEP_RATE),--ars-mep-rate $(ARS_MEP_RATE),) \
-	    $(if $(ARS_CABLE_RATE),--ars-cable-rate $(ARS_CABLE_RATE),)
+	    $(if $(ARS_CABLE_RATE),--ars-cable-rate $(ARS_CABLE_RATE),) \
+	    $(if $(BROKER_FEATURES),--broker-features "$(BROKER_FEATURES)",)
 
 ## Portfolio from a comma-separated ticker list (usage: make portfolio-tickers TICKERS=NVDA,AMZN [DATE=YYYY-MM-DD])
 portfolio-tickers:
@@ -72,7 +77,8 @@ portfolio-tickers:
 	    $(if $(CANDIDATES),--candidates "$(CANDIDATES)",) \
 	    $(if $(CASH),--cash "$(CASH)",) \
 	    $(if $(ARS_MEP_RATE),--ars-mep-rate $(ARS_MEP_RATE),) \
-	    $(if $(ARS_CABLE_RATE),--ars-cable-rate $(ARS_CABLE_RATE),)
+	    $(if $(ARS_CABLE_RATE),--ars-cable-rate $(ARS_CABLE_RATE),) \
+	    $(if $(BROKER_FEATURES),--broker-features "$(BROKER_FEATURES)",)
 
 ## Run the main_portfolio.py example script
 portfolio-example:

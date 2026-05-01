@@ -208,6 +208,13 @@ def format_portfolio_context(
         lines.append("")
         lines.append(fit_block)
 
+    broker_block = _format_broker_constraints(
+        portfolio_context.get("broker_features")
+    )
+    if broker_block:
+        lines.append("")
+        lines.append(broker_block)
+
     # If the only line we produced is the heading, treat as no-op.
     if len(lines) == 1:
         return ""
@@ -437,5 +444,63 @@ def _format_candidate_fit(fit: Any) -> str:
         "- ⚠ HARD GATE: BUY (initiate) is INVALID if sector overlap == 'full' AND "
         "the target role bucket is already at/above target weight. In that case "
         "the only valid call is HOLD (watchlist) until the bucket frees up."
+    )
+    return "\n".join(lines)
+
+
+def _format_broker_constraints(broker_features: Any) -> str:
+    """Render broker-capability constraints when restricted.
+
+    Only emits a block when the broker is missing automatic execution features
+    (stop_loss, bracket) — otherwise the LLM has no reason to reframe its
+    output. When emitted, the block tells the Risk Judge to express exits as
+    manual-monitoring conditions and to use ``stop_loss.type = "manual_monitor"``.
+    """
+    if not broker_features:
+        return ""
+    if isinstance(broker_features, str):
+        features = {broker_features.lower().strip()}
+    elif isinstance(broker_features, (list, tuple, set, frozenset)):
+        features = {str(f).lower().strip() for f in broker_features}
+    else:
+        return ""
+
+    has_gtd = "gtd" in features
+    has_stop = "stop_loss" in features or "stop-loss" in features
+    has_bracket = "bracket" in features
+
+    # If the broker has stops AND brackets, no special framing needed.
+    if has_stop and has_bracket:
+        return ""
+
+    if not has_gtd:
+        # Without GTD we can't even suggest a price-conditional order.
+        return (
+            "**Broker constraints**: limited capability. The user cannot "
+            "place price-conditional orders. Express ALL entries and exits "
+            "as conditions to monitor manually, with explicit price levels."
+        )
+
+    lines = ["**Broker constraints**: GTD (limit) orders only."]
+    missing = []
+    if not has_stop:
+        missing.append("automatic stop-loss")
+    if not has_bracket:
+        missing.append("bracket / OCO orders")
+    if missing:
+        lines.append(f"- The broker does NOT support: {', '.join(missing)}.")
+    lines.append(
+        "- Entries: express as a GTD limit price + plazo (e.g. \"GTD buy "
+        "limit at $X for N days\")."
+    )
+    lines.append(
+        "- Exits: express as MANUAL monitoring conditions, NOT automatic "
+        "orders. Set ``stop_loss.type = \"manual_monitor\"`` and write the "
+        "value as the trigger level. Example: \"if close < $35, place GTD "
+        "sell at $34 next session\"."
+    )
+    lines.append(
+        "- The user reads this report and places the GTD orders himself; "
+        "any exit logic that requires an automatic stop will not execute."
     )
     return "\n".join(lines)

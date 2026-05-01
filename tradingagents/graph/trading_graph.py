@@ -60,6 +60,7 @@ def _augment_portfolio_context(
     *,
     reports_dir: str = "reports",
     liquidity: Optional[Dict[str, Any]] = None,
+    broker_features: Optional[List[str]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Inject portfolio-level fields into a per-ticker context dict.
 
@@ -82,6 +83,8 @@ def _augment_portfolio_context(
         augmented["previous_decision"] = prev.to_dict()
     if liquidity is not None and augmented.get("is_candidate"):
         augmented["liquidity"] = copy.deepcopy(liquidity)
+    if broker_features:
+        augmented["broker_features"] = list(broker_features)
     return augmented if augmented else None
 
 
@@ -332,6 +335,10 @@ class TradingAgentsGraph:
 
         semaphore = asyncio.Semaphore(max_concurrency)
         candidates = candidates or {}
+        # Broker capabilities flow into every per-ticker ctx so the Risk
+        # Judge frames exits as manual-monitor conditions when the user's
+        # broker can't execute automatic stops.
+        broker_features = list(self.config.get("broker_features") or [])
 
         # Compute portfolio-level aggregates ONCE per run, so every ticker's
         # Risk Judge sees the same whole-book view. None when holdings lack
@@ -390,6 +397,7 @@ class TradingAgentsGraph:
                     trade_date,
                     agg_dict,
                     liquidity=liquidity,
+                    broker_features=broker_features,
                 )
                 try:
                     state, decision = await self.propagate_async(

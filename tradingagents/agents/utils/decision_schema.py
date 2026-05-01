@@ -33,11 +33,19 @@ class EntryPlan(BaseModel):
 
 
 class StopLoss(BaseModel):
-    """Exit-side discipline. Required on every decision — even HOLD."""
+    """Exit-side discipline. Required on every decision — even HOLD.
+
+    ``type`` semantics:
+    * ``trailing`` — automatic trailing stop, executed by the broker.
+    * ``hard`` — automatic hard stop at a fixed price.
+    * ``manual_monitor`` — user must monitor the level and place a GTD sell
+      manually if breached (used when the broker doesn't support automatic
+      stops). The ``value`` is still the trigger level.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
-    type: Literal["trailing", "hard"]
+    type: Literal["trailing", "hard", "manual_monitor"]
     value: str = Field(..., min_length=1)
     basis: str = Field(..., min_length=1)
 

@@ -60,7 +60,7 @@ veneer over a prose argument the rules forbid.
     "basis": "one-line justification"
   },
   "stop_loss": {
-    "type": "trailing" | "hard",
+    "type": "trailing" | "hard" | "manual_monitor",
     "value": "10%" | "$X" | "below SMA 200d at $Y",
     "basis": "one-line justification"
   },
@@ -125,6 +125,12 @@ Rules the validator enforces (do not produce JSON that violates them):
   "chasing"; thesis_strength MUST be "medium" or "high"; rationale MUST
   cite a fundamental thesis (not technical-only); `sector_overlap=="full"
   AND role_gap_aligned==false` is a HARD reject — must HOLD instead.
+* When a "Broker constraints" block appears in the Portfolio Context (the
+  user's broker only supports GTD limit orders and CANNOT auto-execute
+  stops), set `stop_loss.type = "manual_monitor"` and write `value` as the
+  trigger LEVEL (e.g. "$35 close"). Express `exit_trigger` and
+  `entry_trigger` in Section 5/6 as monitoring instructions ("if X
+  happens, place GTD sell at $Y"), not as automatic orders.
 '''
 
 

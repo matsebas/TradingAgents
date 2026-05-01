@@ -25,11 +25,14 @@ from tradingagents.graph.trading_graph import (
 class _FakeGraph:
     """Stand-in for ``TradingAgentsGraph`` with just the bits we need."""
 
-    def __init__(self, behaviour):
+    def __init__(self, behaviour, config=None):
         self.behaviour = behaviour  # dict ticker -> ("ok"|"raise", delay_s)
         self._in_flight = 0
         self.max_observed = 0
         self._lock = asyncio.Lock()
+        # propagate_portfolio reads self.config.broker_features — provide a
+        # safe default so existing tests that don't care still work.
+        self.config = config or {}
 
     async def propagate_async(self, ticker, trade_date, on_node=None, portfolio_context=None):
         async with self._lock:

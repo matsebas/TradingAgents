@@ -40,4 +40,10 @@ DEFAULT_CONFIG = {
         # Example: "get_stock_data": "alpha_vantage",  # Override category default
         # Example: "get_news": "openai",               # Override category default
     },
+    # Broker capabilities — drives how the Risk Judge expresses exit triggers
+    # and how the reporter emits actionable orders. When the broker only
+    # supports GTD (no automatic stop-loss / bracket), exits are expressed
+    # as MANUAL monitoring conditions so the user can act on them himself.
+    # Possible values (combine as needed): "gtd", "stop_loss", "bracket".
+    "broker_features": ["gtd"],
 }

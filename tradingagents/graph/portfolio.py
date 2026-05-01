@@ -255,6 +255,176 @@ def _append_section(lines: list[str], heading: str, body: Any, level: int = 4) -
     lines.append(text)
 
 
+def _broker_features_for_result(r: "PortfolioResult") -> set[str]:
+    """Extract the broker feature set from a result's portfolio_context.
+    Returns ``set()`` when not set (caller treats that as no restriction)."""
+    if r.state is None:
+        return set()
+    ctx = r.state.get("portfolio_context") or {}
+    raw = ctx.get("broker_features") or []
+    return {str(f).lower().strip() for f in raw}
+
+
+def _is_broker_restricted(features: set[str]) -> bool:
+    """True when broker can't auto-execute stops/brackets — exits must be manual."""
+    if not features:
+        return False
+    has_stop = "stop_loss" in features or "stop-loss" in features
+    has_bracket = "bracket" in features
+    return not (has_stop and has_bracket)
+
+
+def _render_broker_orders(results: list["PortfolioResult"]) -> list[str]:
+    """Render the consolidated GTD-actionable orders section.
+
+    Only emits when at least one result indicates a restricted broker
+    (e.g. ``broker_features=["gtd"]``). Reads ``trade_decision_structured``
+    from each result's state and extracts the entry plan + stop level
+    expressed as plain GTD instructions the user can take to his broker.
+    """
+    if not results:
+        return []
+
+    # Detect restriction from the first result that has the field. All
+    # tickers in a run share the same config so any one is representative.
+    restricted = False
+    for r in results:
+        feats = _broker_features_for_result(r)
+        if feats and _is_broker_restricted(feats):
+            restricted = True
+            break
+    if not restricted:
+        return []
+
+    lines = ["## Broker-Actionable Orders (GTD-only)"]
+    lines.append("")
+    lines.append(
+        "_Listo para llevar al broker. Entries son limit GTD; exits son "
+        "niveles a monitorear manualmente — si el precio toca el nivel, "
+        "vas al broker y ponés una GTD sell._"
+    )
+    lines.append("")
+    lines.append(
+        "| Ticker | Action | Limit price | Plazo / qty | Manual exit triggers |"
+    )
+    lines.append(
+        "|--------|--------|-------------|-------------|----------------------|"
+    )
+
+    any_row = False
+    for r in results:
+        state = r.state or {}
+        structured = state.get("trade_decision_structured") or {}
+        if not structured:
+            continue
+
+        decision = (structured.get("decision") or "").upper()
+        ctx = state.get("portfolio_context") or {}
+        is_cand = bool(ctx.get("is_candidate"))
+
+        action = _broker_action_label(decision, is_cand)
+        if action == "—":
+            # Pure HOLD on existing positions with no actionable order — skip
+            # to keep the table dense. The position still has a manual-monitor
+            # exit, surfaced in the next column.
+            entry_str = "—"
+            qty_str = "—"
+        else:
+            entry_str, qty_str = _broker_entry_text(structured)
+
+        exit_str = _broker_exit_text(structured)
+
+        # Skip entirely empty rows (no action AND no monitor trigger).
+        if action == "—" and exit_str == "—":
+            continue
+
+        lines.append(
+            f"| {r.ticker} | {action} | {entry_str} | {qty_str} | {exit_str} |"
+        )
+        any_row = True
+
+    if not any_row:
+        return []
+    return lines
+
+
+def _broker_action_label(decision: str, is_candidate: bool) -> str:
+    """Map (decision, is_candidate) to the broker-action verb."""
+    decision = (decision or "").upper()
+    if is_candidate:
+        if decision == "BUY":
+            return "**ADD** (initiate)"
+        if decision == "HOLD":
+            return "WATCHLIST"
+        if decision == "SELL":
+            return "REJECT"
+    else:
+        if decision == "BUY":
+            return "**ADD** (scale up)"
+        if decision == "SELL":
+            return "**TRIM / EXIT**"
+        # HOLD on existing position → no broker action, only monitoring.
+        return "—"
+    return "—"
+
+
+def _broker_entry_text(structured: dict) -> tuple[str, str]:
+    """Extract limit price + plazo/qty from the structured decision."""
+    plan = structured.get("entry_plan") or {}
+    triggers = structured.get("triggers") or {}
+    qty = structured.get("qty_change", 0)
+
+    target = plan.get("tier_pullback_target") or plan.get("basis") or "—"
+    tier_now = plan.get("tier_now_pct")
+
+    # Try to surface a concrete price from the entry trigger string.
+    entry_str = str(target).strip() or "—"
+    qty_parts: list[str] = []
+    if isinstance(qty, int) and qty != 0:
+        qty_parts.append(f"qty {qty:+d}")
+    if tier_now is not None:
+        qty_parts.append(f"{tier_now}% now")
+    qty_str = " / ".join(qty_parts) if qty_parts else "—"
+
+    # If there's no concrete price in entry_plan, fall back to the entry
+    # trigger phrasing so the user has SOMETHING to act on.
+    if entry_str in ("—", ""):
+        entry_str = (triggers.get("entry_trigger") or "—").strip() or "—"
+
+    return entry_str, qty_str
+
+
+def _broker_exit_text(structured: dict) -> str:
+    """Express the exit/stop as a manual monitoring instruction."""
+    stop = structured.get("stop_loss") or {}
+    triggers = structured.get("triggers") or {}
+
+    stop_value = (stop.get("value") or "").strip()
+    stop_type = (stop.get("type") or "").lower()
+    exit_trigger = (triggers.get("exit_trigger") or "").strip()
+
+    parts: list[str] = []
+    if stop_value:
+        if stop_type == "manual_monitor":
+            parts.append(f"Monitor: if price breaches {stop_value} → GTD sell")
+        elif stop_type == "trailing":
+            parts.append(
+                f"Monitor trailing {stop_value}: if breached → GTD sell "
+                "(broker has no auto-trailing)"
+            )
+        elif stop_type == "hard":
+            parts.append(
+                f"Monitor: if close < {stop_value} → GTD sell next session"
+            )
+        else:
+            parts.append(f"Stop level: {stop_value} (manual)")
+
+    if exit_trigger and exit_trigger.lower() not in (s.lower() for s in parts):
+        parts.append(exit_trigger)
+
+    return "; ".join(parts) if parts else "—"
+
+
 def _is_candidate_result(r: "PortfolioResult") -> bool:
     """True iff this ticker was evaluated as a NEW-position candidate."""
     if r.state is None:
@@ -590,6 +760,11 @@ class PortfolioReporter:
             lines.append(
                 f"| {r.ticker} | {r.short_decision()} | {r.duration_s:.1f}s | {log_cell} | {error_cell} |"
             )
+
+        broker_orders = _render_broker_orders(ok)
+        if broker_orders:
+            lines.append("")
+            lines.extend(broker_orders)
 
         candidate_table = _render_candidate_summary(ok)
         if candidate_table:

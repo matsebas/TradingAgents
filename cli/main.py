@@ -1311,6 +1311,15 @@ def portfolio(
         "--ars-cable-rate",
         help="ARS-to-USD rate via Cable (alternative to --ars-mep-rate).",
     ),
+    broker_features: Optional[str] = typer.Option(
+        None,
+        "--broker-features",
+        help=(
+            "Override broker capabilities (default in config: 'gtd'). "
+            "Comma-separated subset of: 'gtd', 'stop_loss', 'bracket'. "
+            "Leave unset to use the config default."
+        ),
+    ),
 ) -> None:
     """Run the TradingAgents pipeline for a list of tickers in parallel."""
     import asyncio
@@ -1430,6 +1439,15 @@ def portfolio(
     # and slow with Pro. Override at call-site if you really want Pro.
     config["quick_think_llm"] = "gemini-3-flash-preview"
     config["deep_think_llm"] = "gemini-3-flash-preview"
+    if broker_features is not None:
+        # CLI override of the config default. Empty string disables all
+        # broker awareness (legacy behaviour).
+        feats = [
+            f.strip().lower()
+            for f in broker_features.split(",")
+            if f.strip()
+        ]
+        config["broker_features"] = feats
     ta = TradingAgentsGraph(config=config, debug=False)
 
     # Route noisy vendor debug prints to a log file so the live dashboard

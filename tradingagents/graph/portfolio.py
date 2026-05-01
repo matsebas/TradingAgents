@@ -255,6 +255,89 @@ def _append_section(lines: list[str], heading: str, body: Any, level: int = 4) -
     lines.append(text)
 
 
+def _is_candidate_result(r: "PortfolioResult") -> bool:
+    """True iff this ticker was evaluated as a NEW-position candidate."""
+    if r.state is None:
+        return False
+    ctx = r.state.get("portfolio_context") or {}
+    return bool(ctx.get("is_candidate"))
+
+
+def _candidate_decision_label(decision: str) -> str:
+    """Map BUY/HOLD/SELL to candidate-specific labels."""
+    return {
+        "BUY": "ADD",
+        "HOLD": "WATCHLIST",
+        "SELL": "REJECT",
+    }.get((decision or "").upper(), decision or "—")
+
+
+def _render_candidate_summary(results: list["PortfolioResult"]) -> list[str]:
+    """Render the comparative table for candidate tickers, or empty list if none.
+
+    Pulls structured data from ``trade_decision_structured`` (set by the Risk
+    Judge) and the precomputed ``candidate_fit`` (in portfolio_context). Falls
+    back to dashes when data is missing — never hides a row.
+    """
+    candidates = [r for r in results if _is_candidate_result(r)]
+    if not candidates:
+        return []
+
+    lines: list[str] = ["## Candidate Evaluation"]
+    lines.append("")
+    lines.append(
+        "| Ticker | Decision | Score | Role | Role gap | Sector overlap | "
+        "Entry quality | Recommended size |"
+    )
+    lines.append(
+        "|--------|----------|------:|------|----------|----------------|"
+        "---------------|------------------|"
+    )
+
+    for r in candidates:
+        state = r.state or {}
+        structured = state.get("trade_decision_structured") or {}
+        ctx = state.get("portfolio_context") or {}
+        fit = ctx.get("candidate_fit") or {}
+        role_gap = fit.get("role_gap") or {}
+        overlap = fit.get("sector_overlap") or {}
+        cand = structured.get("candidate") or {}
+
+        decision_raw = (structured.get("decision") or r.short_decision() or "").upper()
+        decision_label = _candidate_decision_label(decision_raw)
+        score = cand.get("score")
+        score_str = f"{score:.1f}" if isinstance(score, (int, float)) else "—"
+        role = (structured.get("role") or ctx.get("role") or "candidate")
+
+        gap_str = (
+            "FILLS" if role_gap.get("has_gap")
+            else f"AT/OVER ({role_gap.get('current_weight_pct', 0):.1f}/"
+                 f"{role_gap.get('target_weight_pct', 0):.1f}%)"
+        )
+
+        ov_level = overlap.get("level") or cand.get("sector_overlap") or "—"
+        ov_with = ", ".join(overlap.get("overlapping_tickers") or cand.get("sector_overlap_with") or []) or "—"
+        ov_str = f"{ov_level}" + (f" ({ov_with})" if ov_with != "—" else "")
+
+        entry_q = structured.get("entry_quality") or "n/a"
+
+        rec_pct = cand.get("recommended_size_pct") or fit.get("recommended_initial_weight_pct")
+        rec_usd = cand.get("recommended_size_usd") or fit.get("recommended_initial_size_usd")
+        if rec_pct is not None and rec_usd is not None:
+            size_str = f"{rec_pct:.1f}% (${rec_usd:,.0f})"
+        elif rec_pct is not None:
+            size_str = f"{rec_pct:.1f}%"
+        else:
+            size_str = "—"
+
+        lines.append(
+            f"| {r.ticker} | **{decision_label}** | {score_str} | {role} | "
+            f"{gap_str} | {ov_str} | {entry_q} | {size_str} |"
+        )
+
+    return lines
+
+
 def _render_ticker_detail(r: "PortfolioResult") -> list[str]:
     """Expand a ticker's final state into markdown mirroring the JSON log.
 
@@ -507,6 +590,11 @@ class PortfolioReporter:
             lines.append(
                 f"| {r.ticker} | {r.short_decision()} | {r.duration_s:.1f}s | {log_cell} | {error_cell} |"
             )
+
+        candidate_table = _render_candidate_summary(ok)
+        if candidate_table:
+            lines.append("")
+            lines.extend(candidate_table)
 
         if ok:
             lines.append("")

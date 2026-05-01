@@ -85,9 +85,31 @@ veneer over a prose argument the rules forbid.
     "weight_gate_passes": false
   },
   "falsification_criteria": ["concrete observation 1", "concrete observation 2"],
-  "rationale": "2-4 sentence summary of why this is the call"
+  "rationale": "2-4 sentence summary of why this is the call",
+  "candidate": null
 }
 ```
+
+If the position role is **candidate** (a NEW position being evaluated for
+initiation), populate the optional `candidate` object instead of leaving it
+null. Schema:
+
+```json
+"candidate": {
+  "score": 7.5,
+  "role_gap_aligned": true,
+  "sector_overlap": "none" | "partial" | "full",
+  "sector_overlap_with": ["NVDA", "SMH"],
+  "thesis_strength": "high" | "medium" | "low",
+  "recommended_size_pct": 2.0,
+  "recommended_size_usd": 1000.0
+}
+```
+
+For candidates, `decision` is interpreted as: **BUY = initiate**, **HOLD =
+watchlist**, **SELL = reject the thesis**. Scoring guidance (sum to 0-10):
+thesis_strength 0-3, entry_quality 0-3, role_gap fit 0-3, sector
+diversification 0-1.
 
 Rules the validator enforces (do not produce JSON that violates them):
 * If `decision` is BUY, `entry_plan` is required (not null).
@@ -99,6 +121,10 @@ Rules the validator enforces (do not produce JSON that violates them):
   `entry_quality == "optimal"`.
 * Anchor SELL requires a structural reason in `rationale`, not technical
   oscillators alone.
+* For role="candidate" with decision=BUY: entry_quality MUST NOT be
+  "chasing"; thesis_strength MUST be "medium" or "high"; rationale MUST
+  cite a fundamental thesis (not technical-only); `sector_overlap=="full"
+  AND role_gap_aligned==false` is a HARD reject — must HOLD instead.
 '''
 
 

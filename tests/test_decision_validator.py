@@ -320,6 +320,144 @@ def test_anchor_sell_with_structural_reasoning_passes():
 # --- auto_downgrade_to_hold -----------------------------------------------
 
 
+# --- validate_decision: candidate (initiation) gates --------------------
+
+
+def _candidate_payload(**overrides):
+    payload = _valid_payload(
+        decision="BUY",
+        role="candidate",
+        entry_quality="optimal",
+        rationale=(
+            "Strong fundamental thesis: company posted 30% YoY revenue "
+            "growth with operating margin expansion. Healthcare sector "
+            "underrepresented in book — fills a real role gap."
+        ),
+        entry_plan={
+            "tier_now_pct": 50,
+            "tier_pullback_target": "SMA 50d",
+            "basis": "starter at 2% of book",
+        },
+    )
+    payload["candidate"] = {
+        "score": 7.5,
+        "role_gap_aligned": True,
+        "sector_overlap": "none",
+        "sector_overlap_with": [],
+        "thesis_strength": "high",
+        "recommended_size_pct": 2.0,
+        "recommended_size_usd": 1000.0,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def test_candidate_buy_with_full_overlap_and_no_gap_is_rejected():
+    payload = _candidate_payload()
+    payload["candidate"]["sector_overlap"] = "full"
+    payload["candidate"]["role_gap_aligned"] = False
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert not outcome.ok
+    assert any("blocked" in i.lower() for i in outcome.issues)
+
+
+def test_candidate_buy_with_full_overlap_but_role_gap_passes():
+    """Full overlap is OK if the role bucket has headroom."""
+    payload = _candidate_payload()
+    payload["candidate"]["sector_overlap"] = "full"
+    payload["candidate"]["role_gap_aligned"] = True
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert outcome.ok
+
+
+def test_candidate_buy_with_chasing_entry_is_rejected():
+    payload = _candidate_payload(entry_quality="chasing")
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert not outcome.ok
+    assert any("chasing" in i.lower() for i in outcome.issues)
+
+
+def test_candidate_buy_without_candidate_attributes_is_rejected():
+    payload = _candidate_payload()
+    payload.pop("candidate")
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert not outcome.ok
+    assert any("candidate" in i.lower() for i in outcome.issues)
+
+
+def test_candidate_buy_with_low_thesis_is_rejected():
+    payload = _candidate_payload()
+    payload["candidate"]["thesis_strength"] = "low"
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert not outcome.ok
+    assert any("thesis_strength" in i for i in outcome.issues)
+
+
+def test_candidate_buy_with_technical_only_rationale_is_rejected():
+    payload = _candidate_payload(
+        rationale="RSI broke above 50 with bullish MACD crossover."
+    )
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert not outcome.ok
+    assert any("technical" in i.lower() for i in outcome.issues)
+
+
+def test_candidate_hold_does_not_require_full_attributes():
+    """WATCHLIST (HOLD) is permissive — it's the safe default for unclear cases."""
+    payload = _candidate_payload(decision="HOLD")
+    payload["entry_plan"] = None  # HOLD doesn't need an entry plan
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert outcome.ok
+
+
+def test_candidate_lying_overlap_is_overridden_by_precomputed():
+    """Regression: same pattern as the is_flip lying fix. The LLM may emit
+    sector_overlap='partial' to bypass the hard gate when the precomputed
+    fit says 'full'. The validator must trust the precomputed value."""
+    payload = _candidate_payload()
+    payload["candidate"]["sector_overlap"] = "partial"  # LLM lying
+    payload["candidate"]["role_gap_aligned"] = False
+
+    # Precomputed fit (from the orchestrator) says FULL overlap and no gap.
+    ctx = {
+        "role": "candidate",
+        "candidate_fit": {
+            "role_gap": {"role": "tactical", "has_gap": False},
+            "sector_overlap": {"level": "full", "overlapping_tickers": ["NVDA", "SMH"]},
+        },
+    }
+    outcome = validate_decision(payload, portfolio_context=ctx)
+    assert not outcome.ok
+    issues = " ".join(outcome.issues).lower()
+    # Mismatch flagged AND hard gate fires from the trusted value.
+    assert "self-reported" in issues
+    assert "blocked" in issues
+
+
+def test_candidate_lying_role_gap_aligned_is_overridden():
+    payload = _candidate_payload()
+    payload["candidate"]["role_gap_aligned"] = True  # LLM lying
+    payload["candidate"]["sector_overlap"] = "full"
+
+    ctx = {
+        "role": "candidate",
+        "candidate_fit": {
+            "role_gap": {"role": "tactical", "has_gap": False},
+            "sector_overlap": {"level": "full"},
+        },
+    }
+    outcome = validate_decision(payload, portfolio_context=ctx)
+    assert not outcome.ok
+
+
+def test_candidate_sell_does_not_require_full_attributes():
+    """REJECT (SELL) is also permissive — rejecting a thesis is always allowed."""
+    payload = _candidate_payload(decision="SELL")
+    payload["entry_plan"] = None
+    outcome = validate_decision(payload, portfolio_context={"role": "candidate"})
+    assert outcome.ok
+
+
 def test_auto_downgrade_produces_valid_hold_decision():
     downgraded = auto_downgrade_to_hold(
         decision=None,

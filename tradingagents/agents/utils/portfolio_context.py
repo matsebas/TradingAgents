@@ -44,6 +44,21 @@ _ROLE_GUIDANCE_BASE: dict[str, str] = {
         "protocol/security failure, or counterparty failure. Size discipline "
         "matters more than entry/exit timing."
     ),
+    "candidate": (
+        "Candidate / new position being evaluated for INITIATION. The "
+        "decision space is reinterpreted: BUY = initiate the position; "
+        "HOLD = add to watchlist (don't initiate now); SELL = reject "
+        "the thesis. BUY (initiate) requires ALL of: (a) a fundamental "
+        "thesis with explicit citation (not technical-only), (b) entry "
+        "quality of 'optimal' or 'stretched' (NOT 'chasing'), (c) the "
+        "candidate's target role bucket has headroom (current bucket weight "
+        "below target), and (d) sector overlap is NOT 'full' when the "
+        "target role bucket is already at/above target. The default "
+        "starter size is 2% of total book, with the LLM permitted to "
+        "scale to 1% (low-conviction starter) or 3% (high-conviction "
+        "with rare circumstances). NEVER initiate a position whose size "
+        "exceeds 5% of available USD-deployable liquidity."
+    ),
 }
 
 # When a tactical position is already deep in the green, the asymmetry of
@@ -183,6 +198,16 @@ def format_portfolio_context(
         lines.append("")
         lines.append(prev_block)
 
+    liquidity_block = _format_liquidity(portfolio_context.get("liquidity"))
+    if liquidity_block:
+        lines.append("")
+        lines.append(liquidity_block)
+
+    fit_block = _format_candidate_fit(portfolio_context.get("candidate_fit"))
+    if fit_block:
+        lines.append("")
+        lines.append(fit_block)
+
     # If the only line we produced is the heading, treat as no-op.
     if len(lines) == 1:
         return ""
@@ -285,4 +310,132 @@ def _format_previous_decision(prev: Any) -> str:
             "a flip — call those out as continuity, not as new information."
         ),
     ]
+    return "\n".join(lines)
+
+
+def _format_liquidity(liquidity: Any) -> str:
+    """Render the Liquidity snapshot for sizing new positions.
+
+    Only relevant for candidates — for existing positions the Risk Judge
+    doesn't size against deployable cash, it sizes against the existing
+    holding. Caller decides when to inject this into the ctx.
+    """
+    if not liquidity:
+        return ""
+    if isinstance(liquidity, Mapping):
+        data = dict(liquidity)
+    elif hasattr(liquidity, "to_dict"):
+        data = liquidity.to_dict()
+    else:
+        return ""
+
+    mm = data.get("total_money_market_usd") or 0.0
+    rf = data.get("total_fixed_income_usd") or 0.0
+    cash_mep = data.get("cash_mep_usd") or 0.0
+    cash_cable = data.get("cash_cable_usd") or 0.0
+    cash_ars = data.get("cash_ars_native") or 0.0
+    ars_rate = data.get("cash_ars_to_usd_rate")
+    total = data.get("total_deployable_usd") or 0.0
+
+    if total <= 0 and mm <= 0 and rf <= 0 and cash_mep <= 0 and cash_cable <= 0:
+        return ""
+
+    lines = ["**Available Liquidity for new positions**:"]
+    if mm > 0:
+        lines.append(f"- Money market FCI: ${mm:,.2f} USD — immediate deploy")
+    if rf > 0:
+        lines.append(f"- Fixed-income FCI: ${rf:,.2f} USD — 1-2 day deploy")
+    if cash_mep > 0:
+        lines.append(f"- Cash MEP: ${cash_mep:,.2f} USD")
+    if cash_cable > 0:
+        lines.append(f"- Cash CABLE: ${cash_cable:,.2f} USD")
+    if cash_ars > 0:
+        if ars_rate:
+            usd_eq = cash_ars / ars_rate
+            lines.append(
+                f"- Cash ARS: ${cash_ars:,.2f} (≈ ${usd_eq:,.2f} USD @ rate {ars_rate})"
+            )
+        else:
+            lines.append(
+                f"- Cash ARS: ${cash_ars:,.2f} — NOT counted toward deployable USD (no rate)"
+            )
+    lines.append(f"- **TOTAL deployable**: ${total:,.2f} USD")
+    lines.append(
+        "- ⚠ Initial size for a new position MUST NOT exceed 5% of total "
+        "deployable USD, regardless of book-weight target."
+    )
+    return "\n".join(lines)
+
+
+def _format_candidate_fit(fit: Any) -> str:
+    """Render the precomputed CandidateFit attributes for a candidate."""
+    if not fit:
+        return ""
+    if isinstance(fit, Mapping):
+        data = dict(fit)
+    elif hasattr(fit, "to_dict"):
+        data = fit.to_dict()
+    else:
+        return ""
+
+    role_gap = data.get("role_gap") or {}
+    overlap = data.get("sector_overlap") or {}
+
+    role = role_gap.get("role") if isinstance(role_gap, Mapping) else getattr(role_gap, "role", "?")
+    has_gap = role_gap.get("has_gap") if isinstance(role_gap, Mapping) else getattr(role_gap, "has_gap", False)
+    cur = role_gap.get("current_weight_pct") if isinstance(role_gap, Mapping) else getattr(role_gap, "current_weight_pct", 0.0)
+    tgt = role_gap.get("target_weight_pct") if isinstance(role_gap, Mapping) else getattr(role_gap, "target_weight_pct", 0.0)
+    headroom = role_gap.get("headroom_pct") if isinstance(role_gap, Mapping) else getattr(role_gap, "headroom_pct", 0.0)
+
+    overlap_level = overlap.get("level") if isinstance(overlap, Mapping) else getattr(overlap, "level", "none")
+    overlap_sector = overlap.get("candidate_sector") if isinstance(overlap, Mapping) else getattr(overlap, "candidate_sector", None)
+    overlap_industry = overlap.get("candidate_industry") if isinstance(overlap, Mapping) else getattr(overlap, "candidate_industry", None)
+    overlap_with = overlap.get("overlapping_tickers") if isinstance(overlap, Mapping) else getattr(overlap, "overlapping_tickers", ())
+
+    rec_pct = data.get("recommended_initial_weight_pct")
+    rec_usd = data.get("recommended_initial_size_usd")
+
+    lines = ["**Portfolio Fit for this Candidate**:"]
+    gap_label = "FILLS gap" if has_gap else ("AT target" if abs(headroom) < 2.5 else "OVER target")
+    lines.append(
+        f"- Role gap ({role}): {gap_label} — current {cur:.1f}% vs target {tgt:.1f}% "
+        f"(headroom {headroom:+.1f}%)"
+    )
+
+    sector_str = overlap_sector or "unknown"
+    industry_str = overlap_industry or "unknown"
+    if overlap_level == "full":
+        with_str = ", ".join(overlap_with) if overlap_with else "—"
+        lines.append(
+            f"- Sector overlap: **FULL** — {sector_str} / {industry_str} "
+            f"overlaps with: {with_str}"
+        )
+    elif overlap_level == "partial":
+        with_str = ", ".join(overlap_with) if overlap_with else "—"
+        lines.append(
+            f"- Sector overlap: **partial** — same sector ({sector_str}) "
+            f"as: {with_str}, different industry ({industry_str})"
+        )
+    else:
+        lines.append(
+            f"- Sector overlap: none — {sector_str} / {industry_str} is novel exposure"
+        )
+
+    if rec_pct is not None:
+        if rec_usd is not None:
+            lines.append(
+                f"- Recommended initial size: {rec_pct:.1f}% of book = ${rec_usd:,.2f} USD "
+                f"(scale 1-3% based on conviction; cap at 5% of deployable liquidity)"
+            )
+        else:
+            lines.append(
+                f"- Recommended initial size: {rec_pct:.1f}% of book "
+                f"(USD figure unknown — book size not provided)"
+            )
+
+    lines.append(
+        "- ⚠ HARD GATE: BUY (initiate) is INVALID if sector overlap == 'full' AND "
+        "the target role bucket is already at/above target weight. In that case "
+        "the only valid call is HOLD (watchlist) until the bucket frees up."
+    )
     return "\n".join(lines)

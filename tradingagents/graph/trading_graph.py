@@ -26,8 +26,10 @@ from tradingagents.agents.utils.agent_states import (
 from tradingagents.agents.utils.portfolio_aggregate import (
     compute_portfolio_aggregate,
 )
+from tradingagents.agents.utils.portfolio_fit import compute_portfolio_fit
 from tradingagents.dataflows.config import set_config
 from tradingagents.dataflows.previous_decision import load_previous_decision
+from tradingagents.dataflows.sector_lookup import lookup_sector
 
 # Import the new abstract tool methods from agent_utils
 from tradingagents.agents.utils.agent_utils import (
@@ -57,13 +59,18 @@ def _augment_portfolio_context(
     portfolio_aggregate: Optional[Dict[str, Any]],
     *,
     reports_dir: str = "reports",
+    liquidity: Optional[Dict[str, Any]] = None,
 ) -> Optional[Dict[str, Any]]:
     """Inject portfolio-level fields into a per-ticker context dict.
 
     Adds ``portfolio_aggregate`` (the same precomputed dict for every ticker)
-    and ``previous_decision`` (per-ticker, read from disk). Returns the
-    augmented dict, or ``None`` if there's nothing to inject and ``base_ctx``
-    was also ``None``.
+    and ``previous_decision`` (per-ticker, read from disk). When ``liquidity``
+    is provided AND the ctx represents a candidate (``is_candidate=True``),
+    also injects a ``liquidity`` snapshot so the Risk Judge can size new
+    positions against deployable capital.
+
+    Returns the augmented dict, or ``None`` if there's nothing to inject and
+    ``base_ctx`` was also ``None``.
     """
     augmented: Dict[str, Any] = dict(base_ctx) if base_ctx else {}
     if portfolio_aggregate is not None:
@@ -73,6 +80,8 @@ def _augment_portfolio_context(
     prev = load_previous_decision(ticker, trade_date, reports_dir=reports_dir)
     if prev is not None:
         augmented["previous_decision"] = prev.to_dict()
+    if liquidity is not None and augmented.get("is_candidate"):
+        augmented["liquidity"] = copy.deepcopy(liquidity)
     return augmented if augmented else None
 
 
@@ -291,6 +300,8 @@ class TradingAgentsGraph:
         max_concurrency: int = 10,
         progress=None,
         holdings: Dict[str, Dict[str, Any]] | None = None,
+        candidates: Dict[str, Dict[str, Any]] | None = None,
+        liquidity: Optional[Dict[str, Any]] = None,
     ):
         """Run the pipeline for several tickers concurrently.
 
@@ -306,16 +317,35 @@ class TradingAgentsGraph:
         ``{"NVDA": {"avg_cost": 123.4, "currency": "USD"}}``). The context for
         each ticker is threaded into the Trader and Risk Judge prompts only.
         Tickers missing from ``holdings`` simply run with no portfolio context.
+
+        ``candidates`` maps ticker → context dict for tickers being evaluated
+        for INITIATION (not yet held). Candidates run the same pipeline but
+        with role guidance for "should I open a position?" instead of "should
+        I add to / trim?". Candidates are excluded from the portfolio_aggregate
+        (they wouldn't be there yet anyway, with qty=0).
+
+        ``liquidity`` is a serialized ``Liquidity`` snapshot (FCI items + cash)
+        injected into candidate prompts so the Risk Judge can size new
+        positions against actual deployable capital.
         """
         from .portfolio import PortfolioResult  # local import to avoid cycle
 
         semaphore = asyncio.Semaphore(max_concurrency)
+        candidates = candidates or {}
 
         # Compute portfolio-level aggregates ONCE per run, so every ticker's
         # Risk Judge sees the same whole-book view. None when holdings lack
         # qty + avg_cost (e.g. ticker-list mode without positions CSV).
+        # Candidates with qty=0 are silently excluded by compute_portfolio_aggregate
+        # via its `cost > 0` guard, so we can pass holdings as-is.
         portfolio_agg = compute_portfolio_aggregate(holdings)
         agg_dict = portfolio_agg.to_dict() if portfolio_agg is not None else None
+
+        # All tickers we will evaluate this run = existing positions + candidates.
+        # Order: holdings first (in input order), then candidates.
+        all_tickers = list(tickers) + [
+            t for t in candidates.keys() if t not in tickers
+        ]
 
         async def run_one(ticker: str) -> "PortfolioResult":
             start = time.perf_counter()
@@ -327,9 +357,39 @@ class TradingAgentsGraph:
                     if progress is not None
                     else None
                 )
-                base_ctx = holdings.get(ticker) if holdings else None
+                # Resolve base ctx: candidates take precedence if a ticker is
+                # in both maps (defensive — shouldn't happen in practice).
+                if ticker in candidates:
+                    base_ctx = dict(candidates[ticker])
+                    # Compute portfolio fit (role gap, sector overlap, sizing)
+                    # for this candidate. Best-effort — sector lookup degrades
+                    # gracefully if yfinance fails.
+                    try:
+                        fit = compute_portfolio_fit(
+                            ticker,
+                            base_ctx.get("role", "tactical"),
+                            agg_dict,
+                            holdings,
+                            sector_lookup_fn=lookup_sector,
+                            total_deployable_usd=(
+                                liquidity.get("total_deployable_usd")
+                                if isinstance(liquidity, dict)
+                                else None
+                            ),
+                        )
+                        base_ctx["candidate_fit"] = fit.to_dict()
+                    except Exception:  # noqa: BLE001 — fit is auxiliary, never block
+                        pass
+                elif holdings:
+                    base_ctx = holdings.get(ticker)
+                else:
+                    base_ctx = None
                 ctx = _augment_portfolio_context(
-                    base_ctx, ticker, trade_date, agg_dict
+                    base_ctx,
+                    ticker,
+                    trade_date,
+                    agg_dict,
+                    liquidity=liquidity,
                 )
                 try:
                     state, decision = await self.propagate_async(
@@ -356,7 +416,7 @@ class TradingAgentsGraph:
                         duration_s=time.perf_counter() - start,
                     )
 
-        return await asyncio.gather(*(run_one(t) for t in tickers))
+        return await asyncio.gather(*(run_one(t) for t in all_tickers))
 
     def _log_state(self, ticker, trade_date, final_state):
         """Persist the final state to a per-ticker JSON file."""

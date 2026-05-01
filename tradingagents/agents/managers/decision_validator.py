@@ -209,6 +209,73 @@ def validate_decision(
                     f"{decision.entry_quality!r} — role guidance requires 'optimal'."
                 )
 
+    # --- Candidate (new position) gates ---
+    if role == "candidate" and decision.decision == "BUY":
+        if decision.entry_quality == "chasing":
+            issues.append(
+                "Candidate BUY with entry_quality='chasing' — initiating a "
+                "new position on a chasing entry is forbidden by the role "
+                "rules; require optimal or stretched entry."
+            )
+        if decision.candidate is None:
+            issues.append(
+                "Candidate BUY missing required `candidate` attributes "
+                "(score / role_gap_aligned / sector_overlap / thesis_strength)."
+            )
+        else:
+            cand = decision.candidate
+
+            # Re-derive sector_overlap and role_gap_aligned from the precomputed
+            # CandidateFit instead of trusting the LLM's self-report. Same
+            # pattern as the is_flip fix — the LLM can (and has) emitted
+            # boolean fields that don't match the underlying data, and the
+            # hard gate must be unforgeable.
+            ctx_fit = (
+                portfolio_context.get("candidate_fit") if portfolio_context else None
+            )
+            actual_overlap = cand.sector_overlap
+            actual_role_gap_aligned = cand.role_gap_aligned
+            if isinstance(ctx_fit, Mapping):
+                ctx_overlap = (ctx_fit.get("sector_overlap") or {}).get("level")
+                ctx_role_gap = (ctx_fit.get("role_gap") or {}).get("has_gap")
+                if ctx_overlap is not None:
+                    actual_overlap = ctx_overlap
+                    if ctx_overlap != cand.sector_overlap:
+                        issues.append(
+                            f"Candidate self-reported sector_overlap="
+                            f"{cand.sector_overlap!r} but precomputed value is "
+                            f"{ctx_overlap!r}. Use the precomputed value."
+                        )
+                if ctx_role_gap is not None:
+                    actual_role_gap_aligned = bool(ctx_role_gap)
+                    if bool(ctx_role_gap) != cand.role_gap_aligned:
+                        issues.append(
+                            f"Candidate self-reported role_gap_aligned="
+                            f"{cand.role_gap_aligned} but precomputed value is "
+                            f"{bool(ctx_role_gap)}. Use the precomputed value."
+                        )
+
+            # Hard gate uses the trusted (precomputed if available) values.
+            if actual_overlap == "full" and not actual_role_gap_aligned:
+                issues.append(
+                    "Candidate BUY blocked: sector_overlap='full' AND "
+                    "role_gap_aligned=false (the target role bucket is at/over "
+                    "target). The only valid call here is HOLD (watchlist)."
+                )
+            if cand.thesis_strength == "low":
+                issues.append(
+                    "Candidate BUY with thesis_strength='low' — initiating a "
+                    "new position requires medium or high thesis conviction."
+                )
+            # Rationale must not be technical-only — initiating a position on
+            # RSI/MACD/Bollinger alone is exactly the asymmetric-risk pattern
+            # we're closing.
+            if _is_technical_only(decision.rationale):
+                issues.append(
+                    "Candidate BUY rationale is technical-oscillator-only — "
+                    "initiating a new position requires a fundamental thesis."
+                )
+
     # --- Anchor SELL requires structural reason ---
     if role == "anchor" and decision.decision == "SELL":
         # The anchor exit case treats the recommendation itself as a flip-style
@@ -287,7 +354,7 @@ def auto_downgrade_to_hold(
             if decision is not None
             else "auto-downgrade default — role guidance not cited"
         ),
-        role=role if role in ("anchor", "tactical", "speculative") else None,
+        role=role if role in ("anchor", "tactical", "speculative", "candidate") else None,
         entry_quality=decision.entry_quality if decision is not None else "n/a",
         portfolio_weight_math=(
             decision.portfolio_weight_math if decision is not None else None

@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Decision = Literal["BUY", "SELL", "HOLD"]
 EntryQuality = Literal["optimal", "stretched", "chasing", "n/a"]
+SectorOverlapLevel = Literal["none", "partial", "full"]
 
 
 class EntryPlan(BaseModel):
@@ -82,6 +83,25 @@ class PortfolioWeightMath(BaseModel):
     weight_gate_passes: bool
 
 
+class CandidateAttributes(BaseModel):
+    """Attributes specific to a candidate (new-position) decision.
+
+    Mirrors the precomputed CandidateFit but with the LLM's interpretation —
+    so the validator can compare what the code calculated against what the
+    LLM claims, and the reporter can emit a clean comparative table.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    score: float = Field(..., ge=0, le=10)  # composite 0-10
+    role_gap_aligned: bool  # candidate's role bucket has headroom
+    sector_overlap: SectorOverlapLevel
+    sector_overlap_with: list[str] = Field(default_factory=list)
+    thesis_strength: Literal["high", "medium", "low"]
+    recommended_size_pct: float = Field(..., ge=0, le=10)  # of total book
+    recommended_size_usd: Optional[float] = None  # absolute, when book size known
+
+
 class TradeDecision(BaseModel):
     """Final structured output of the Risk Judge."""
 
@@ -95,11 +115,13 @@ class TradeDecision(BaseModel):
     triggers: Triggers
     previous_decision: PrevDecisionConsistency
     cited_role_guidance: str = Field(..., min_length=1)
-    role: Optional[Literal["anchor", "tactical", "speculative"]] = None
+    role: Optional[Literal["anchor", "tactical", "speculative", "candidate"]] = None
     entry_quality: EntryQuality = "n/a"
     portfolio_weight_math: Optional[PortfolioWeightMath] = None
     falsification_criteria: list[str] = Field(..., min_length=1)
     rationale: str = Field(..., min_length=1)
+    # Only set when role == "candidate". Mirrors the precomputed CandidateFit.
+    candidate: Optional[CandidateAttributes] = None
 
     @field_validator("ticker")
     @classmethod

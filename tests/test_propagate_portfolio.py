@@ -141,6 +141,82 @@ def test_augment_does_not_mutate_input_dict(tmp_path: Path):
     assert out is not base_ctx
 
 
+# --- liquidity injection for candidates ----------------------------------
+
+
+def test_augment_injects_liquidity_only_for_candidates(tmp_path: Path):
+    liquidity = {"total_deployable_usd": 30000.0}
+
+    holding_ctx = {"avg_cost": 100, "role": "tactical"}  # is_candidate not set
+    candidate_ctx = {"role": "tactical", "is_candidate": True, "quantity": 0}
+
+    out_holding = _augment_portfolio_context(
+        holding_ctx, "NVDA", "2026-04-28", None,
+        reports_dir=str(tmp_path), liquidity=liquidity,
+    )
+    out_candidate = _augment_portfolio_context(
+        candidate_ctx, "NVO", "2026-04-28", None,
+        reports_dir=str(tmp_path), liquidity=liquidity,
+    )
+
+    # Holdings get NO liquidity block (it's noise — they're not entering).
+    assert "liquidity" not in out_holding
+    # Candidates DO get the liquidity block — sizing depends on it.
+    assert out_candidate["liquidity"]["total_deployable_usd"] == 30000.0
+    # Deep-copied: not the same object reference.
+    assert out_candidate["liquidity"] is not liquidity
+
+
+# --- propagate_portfolio with candidates ---------------------------------
+
+
+@pytest.mark.asyncio
+async def test_propagate_portfolio_runs_holdings_and_candidates(tmp_path: Path):
+    fake = _FakeGraph(
+        behaviour={
+            "NVDA": ("ok", 0.01),  # holding
+            "AMZN": ("ok", 0.01),  # holding
+            "NVO": ("ok", 0.01),   # candidate
+        }
+    )
+
+    holdings = {"NVDA": {"avg_cost": 100, "quantity": 1, "role": "tactical"}}
+    candidates = {"NVO": {"role": "tactical", "is_candidate": True, "quantity": 0, "avg_cost": 0}}
+
+    results = await fake.propagate_portfolio(
+        ["NVDA", "AMZN"], "2026-04-28",
+        max_concurrency=3,
+        holdings=holdings,
+        candidates=candidates,
+    )
+
+    # Order: holdings first (input order), candidates after.
+    assert [r.ticker for r in results] == ["NVDA", "AMZN", "NVO"]
+    assert all(r.ok for r in results)
+
+
+@pytest.mark.asyncio
+async def test_propagate_portfolio_candidate_only_run(tmp_path: Path):
+    fake = _FakeGraph(behaviour={"NVO": ("ok", 0.01)})
+    results = await fake.propagate_portfolio(
+        [],  # no holdings
+        "2026-04-28",
+        max_concurrency=2,
+        candidates={"NVO": {"role": "tactical", "is_candidate": True, "quantity": 0, "avg_cost": 0}},
+    )
+    assert [r.ticker for r in results] == ["NVO"]
+
+
+@pytest.mark.asyncio
+async def test_propagate_portfolio_candidates_optional(tmp_path: Path):
+    """Backward compat: existing callers don't pass candidates kwarg."""
+    fake = _FakeGraph(behaviour={"NVDA": ("ok", 0.01)})
+    results = await fake.propagate_portfolio(
+        ["NVDA"], "2026-04-28", max_concurrency=2
+    )
+    assert [r.ticker for r in results] == ["NVDA"]
+
+
 @pytest.mark.asyncio
 async def test_propagate_portfolio_respects_concurrency_cap():
     fake = _FakeGraph(

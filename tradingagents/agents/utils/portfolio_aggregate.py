@@ -35,6 +35,7 @@ class PortfolioAggregate:
     total_positions: int
     by_role: Mapping[str, RoleBucket] = field(default_factory=dict)
     top_concentrations: tuple[tuple[str, float], ...] = ()  # [(ticker, weight_pct), ...]
+    total_cost_basis_usd: float = 0.0  # sum of qty * avg_cost across measured positions
 
     def to_dict(self) -> dict:
         """Plain-dict form for state injection / JSON persistence."""
@@ -120,4 +121,5 @@ def compute_portfolio_aggregate(
         total_positions=len(holdings),
         by_role=role_buckets,
         top_concentrations=top,
+        total_cost_basis_usd=round(total_cost, 2),
     )

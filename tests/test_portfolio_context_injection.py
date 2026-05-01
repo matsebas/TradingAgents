@@ -226,6 +226,140 @@ def test_format_omits_previous_decision_when_missing():
     assert "previous decision" not in out.lower()
 
 
+# --- liquidity rendering -------------------------------------------------
+
+
+def test_format_renders_liquidity_block_for_candidate():
+    out = format_portfolio_context(
+        {
+            "role": "candidate",
+            "is_candidate": True,
+            "liquidity": {
+                "total_money_market_usd": 6000.0,
+                "total_fixed_income_usd": 23000.0,
+                "cash_mep_usd": 3000.0,
+                "cash_cable_usd": 0.0,
+                "cash_ars_native": 750000.0,
+                "cash_ars_to_usd_rate": 1200.0,
+                "total_deployable_usd": 32625.0,
+            },
+        },
+        "NVO",
+    )
+    assert "Available Liquidity for new positions" in out
+    assert "Money market FCI: $6,000" in out
+    assert "Fixed-income FCI: $23,000" in out
+    assert "Cash MEP: $3,000" in out
+    assert "Cash ARS" in out and "1200" in out  # rate echoed
+    assert "TOTAL deployable" in out
+    assert "5% of total" in out  # the 5% liquidity cap directive
+
+
+def test_format_omits_liquidity_when_all_zero():
+    out = format_portfolio_context(
+        {
+            "role": "candidate",
+            "is_candidate": True,
+            "liquidity": {
+                "total_money_market_usd": 0,
+                "total_fixed_income_usd": 0,
+                "cash_mep_usd": 0,
+                "total_deployable_usd": 0,
+            },
+        },
+        "NVO",
+    )
+    assert "Available Liquidity" not in out
+
+
+# --- candidate_fit rendering ---------------------------------------------
+
+
+def test_format_renders_candidate_fit_block():
+    out = format_portfolio_context(
+        {
+            "role": "candidate",
+            "is_candidate": True,
+            "candidate_fit": {
+                "role_gap": {
+                    "role": "tactical",
+                    "has_gap": True,
+                    "current_weight_pct": 30.0,
+                    "target_weight_pct": 45.0,
+                    "headroom_pct": 15.0,
+                },
+                "sector_overlap": {
+                    "level": "none",
+                    "candidate_sector": "Healthcare",
+                    "candidate_industry": "Drug Manufacturers",
+                    "overlapping_tickers": [],
+                },
+                "recommended_initial_weight_pct": 2.0,
+                "recommended_initial_size_usd": 1000.0,
+            },
+        },
+        "NVO",
+    )
+    assert "Portfolio Fit for this Candidate" in out
+    assert "FILLS gap" in out
+    assert "30.0%" in out and "45.0%" in out
+    assert "Healthcare" in out
+    assert "novel exposure" in out
+    assert "$1,000" in out
+    assert "HARD GATE" in out
+
+
+def test_format_renders_candidate_fit_full_overlap():
+    out = format_portfolio_context(
+        {
+            "role": "candidate",
+            "is_candidate": True,
+            "candidate_fit": {
+                "role_gap": {
+                    "role": "tactical",
+                    "has_gap": False,
+                    "current_weight_pct": 44.0,
+                    "target_weight_pct": 45.0,
+                    "headroom_pct": 1.0,
+                },
+                "sector_overlap": {
+                    "level": "full",
+                    "candidate_sector": "Technology",
+                    "candidate_industry": "Semiconductors",
+                    "overlapping_tickers": ["NVDA", "SMH"],
+                },
+                "recommended_initial_weight_pct": 2.0,
+                "recommended_initial_size_usd": 500.0,
+            },
+        },
+        "AVGO",
+    )
+    assert "AT target" in out
+    assert "**FULL**" in out
+    assert "NVDA" in out and "SMH" in out
+
+
+def test_format_omits_candidate_fit_when_missing():
+    out = format_portfolio_context(
+        {"role": "tactical", "avg_cost": 100}, "NVDA"
+    )
+    assert "Portfolio Fit for this Candidate" not in out
+
+
+# --- candidate role guidance --------------------------------------------
+
+
+def test_candidate_role_renders_initiation_guidance():
+    out = format_portfolio_context(
+        {"role": "candidate", "is_candidate": True}, "NVO"
+    )
+    assert "Position role: **candidate**" in out
+    assert "INITIATION" in out or "initiate" in out.lower()
+    assert "BUY = initiate" in out
+    assert "HOLD = add to watchlist" in out
+    assert "SELL = reject" in out
+
+
 # --- prompt wiring -------------------------------------------------------
 
 

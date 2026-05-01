@@ -1282,11 +1282,49 @@ def portfolio(
         "-c",
         help="Max tickers analysed in parallel.",
     ),
+    candidates: Optional[str] = typer.Option(
+        None,
+        "--candidates",
+        help=(
+            "Comma-separated tickers to evaluate for INITIATION. "
+            "Optional ':role' suffix per ticker — e.g. "
+            "'NVO:tactical,GOOGL:anchor'. Default role: tactical."
+        ),
+    ),
+    cash: Optional[str] = typer.Option(
+        None,
+        "--cash",
+        help=(
+            "Cash holdings beyond FCI liquidity. Format: "
+            "'MEP=3000,CABLE=1500,ARS=750000'. Decimals use '.' (comma is "
+            "the entry separator). ARS requires --ars-mep-rate or "
+            "--ars-cable-rate to count toward deployable USD."
+        ),
+    ),
+    ars_mep_rate: Optional[float] = typer.Option(
+        None,
+        "--ars-mep-rate",
+        help="ARS-to-USD rate via MEP (only required if --cash includes ARS).",
+    ),
+    ars_cable_rate: Optional[float] = typer.Option(
+        None,
+        "--ars-cable-rate",
+        help="ARS-to-USD rate via Cable (alternative to --ars-mep-rate).",
+    ),
 ) -> None:
     """Run the TradingAgents pipeline for a list of tickers in parallel."""
     import asyncio
 
-    from cli.utils import get_portfolio_date, resolve_positions_input
+    from cli.utils import (
+        get_portfolio_date,
+        parse_candidates_input,
+        parse_cash_input,
+        resolve_positions_input,
+    )
+    from tradingagents.dataflows.liquidity_parser import (
+        merge_with_cash,
+        parse_liquidity_csv,
+    )
     from tradingagents.graph.portfolio import PortfolioReporter
 
     type_list = [t.strip() for t in types.split(",") if t.strip()]
@@ -1306,17 +1344,82 @@ def portfolio(
             raise typer.Exit(code=1)
         resolved, holdings = resolve_positions_input(raw.strip(), types=type_list)
 
-    if not resolved:
+    # Parse candidates and cash up front so config errors fail before any
+    # LLM calls are kicked off.
+    try:
+        candidate_holdings = parse_candidates_input(candidates)
+        cash_holdings = parse_cash_input(cash)
+    except ValueError as e:
+        console.print(f"[red]Input error:[/red] {e}")
+        raise typer.Exit(code=1)
+
+    # ARS without an FX rate can't be converted into deployable USD — fail loud.
+    if cash_holdings.has_ars():
+        rate = ars_mep_rate or ars_cable_rate
+        if rate is None or rate <= 0:
+            console.print(
+                "[red]--cash includes ARS but neither --ars-mep-rate nor "
+                "--ars-cable-rate was provided. ARS cannot be converted to "
+                "USD-deployable.[/red]"
+            )
+            raise typer.Exit(code=1)
+        cash_holdings = type(cash_holdings)(
+            mep_usd=cash_holdings.mep_usd,
+            cable_usd=cash_holdings.cable_usd,
+            ars_native=cash_holdings.ars_native,
+            ars_to_usd_rate=float(rate),
+        )
+
+    # Build the unified Liquidity snapshot: FCI rows from the positions CSV
+    # (if any) layered with the cash holdings from --cash.
+    liquidity = None
+    if positions:
+        try:
+            fci = parse_liquidity_csv(positions)
+        except FileNotFoundError:
+            fci = None
+        if fci is not None:
+            liquidity = merge_with_cash(
+                fci,
+                cash_mep_usd=cash_holdings.mep_usd,
+                cash_cable_usd=cash_holdings.cable_usd,
+                cash_ars_native=cash_holdings.ars_native,
+                cash_ars_to_usd_rate=cash_holdings.ars_to_usd_rate,
+            )
+    elif cash_holdings != type(cash_holdings)():
+        # No positions CSV but --cash given → still expose cash as liquidity.
+        from tradingagents.dataflows.liquidity_parser import Liquidity
+        liquidity = merge_with_cash(
+            Liquidity(),
+            cash_mep_usd=cash_holdings.mep_usd,
+            cash_cable_usd=cash_holdings.cable_usd,
+            cash_ars_native=cash_holdings.ars_native,
+            cash_ars_to_usd_rate=cash_holdings.ars_to_usd_rate,
+        )
+
+    if not resolved and not candidate_holdings:
         console.print(_no_tickers_message(positions or tickers, type_list))
         raise typer.Exit(code=1)
 
     trade_date = analysis_date or get_portfolio_date()
 
+    panel_lines = [
+        f"[bold]Holdings ({len(resolved)}):[/bold] {', '.join(resolved) or '(none)'}",
+    ]
+    if candidate_holdings:
+        cand_summary = ", ".join(
+            f"{t}:{ctx['role']}" for t, ctx in candidate_holdings.items()
+        )
+        panel_lines.append(f"[bold]Candidates ({len(candidate_holdings)}):[/bold] {cand_summary}")
+    if liquidity is not None:
+        panel_lines.append(
+            f"[bold]Deployable liquidity:[/bold] ${liquidity.total_deployable_usd:,.2f} USD"
+        )
+    panel_lines.append(f"[bold]Date:[/bold] {trade_date}")
+    panel_lines.append(f"[bold]Max concurrency:[/bold] {max_concurrency}")
     console.print(
         Panel(
-            f"[bold]Tickers ({len(resolved)}):[/bold] {', '.join(resolved)}\n"
-            f"[bold]Date:[/bold] {trade_date}\n"
-            f"[bold]Max concurrency:[/bold] {max_concurrency}",
+            "\n".join(panel_lines),
             title="Portfolio Analysis",
             border_style="green",
         )
@@ -1347,6 +1450,8 @@ def portfolio(
     # the log file.
     dashboard_console = RichConsole(file=sys.stdout)
 
+    liquidity_dict = liquidity.to_dict() if liquidity is not None else None
+
     async def _run(progress):
         return await ta.propagate_portfolio(
             resolved,
@@ -1354,11 +1459,17 @@ def portfolio(
             max_concurrency=max_concurrency,
             progress=progress,
             holdings=holdings or None,
+            candidates=candidate_holdings or None,
+            liquidity=liquidity_dict,
         )
+
+    progress_tickers = list(resolved) + [
+        t for t in candidate_holdings.keys() if t not in resolved
+    ]
 
     with log_file.open("w", encoding="utf-8") as log_fh, contextlib.redirect_stdout(log_fh):
         # stderr stays on the terminal so unexpected tracebacks still surface.
-        with PortfolioProgress(resolved, console=dashboard_console) as progress:
+        with PortfolioProgress(progress_tickers, console=dashboard_console) as progress:
             results = asyncio.run(_run(progress))
 
     reporter = PortfolioReporter(console=console)

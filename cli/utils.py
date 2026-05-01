@@ -1,4 +1,5 @@
 import datetime
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
@@ -6,6 +7,31 @@ import questionary
 
 from cli.main import console
 from cli.models import AnalystType
+
+
+# Roles allowed when overriding candidate classification via the CLI.
+_VALID_ROLES = ("anchor", "tactical", "speculative")
+
+
+@dataclass(frozen=True)
+class CashHoldings:
+    """Cash positions provided via the ``--cash`` flag, beyond FCI liquidity.
+
+    Currencies are stored at face value in their native unit. ARS is NOT
+    auto-converted — the caller must pass an FX rate (``--ars-mep-rate`` or
+    ``--ars-cable-rate``) for it to count toward USD-deployable liquidity.
+    """
+
+    mep_usd: float = 0.0
+    cable_usd: float = 0.0
+    ars_native: float = 0.0
+    ars_to_usd_rate: Optional[float] = None  # MEP rate by default
+
+    def has_ars(self) -> bool:
+        return self.ars_native > 0
+
+    def needs_ars_rate(self) -> bool:
+        return self.has_ars() and self.ars_to_usd_rate is None
 
 ANALYST_ORDER = [
     ("Market Analyst", AnalystType.MARKET),
@@ -115,6 +141,101 @@ def resolve_positions_input(
             seen.add(t)
             out.append(t)
     return out, holdings
+
+
+def parse_candidates_input(
+    raw: Optional[str], default_role: str = "tactical"
+) -> Dict[str, Dict[str, object]]:
+    """Parse the ``--candidates`` flag into a ``{ticker: ctx}`` mapping.
+
+    Accepts a comma-separated list with optional ``:role`` suffix per ticker:
+
+        ``"NVO"`` → tactical (default)
+        ``"NVO:anchor"`` → anchor
+        ``"NVO:tactical,GOOGL:speculative"`` → both, distinct roles
+
+    Each candidate's ``ctx`` is shaped so the existing portfolio_context
+    plumbing accepts it: ``role`` set, ``is_candidate=True``, and zero
+    ``quantity``/``avg_cost`` so it's excluded from cost-basis aggregates.
+    """
+    if not raw:
+        return {}
+    if default_role not in _VALID_ROLES:
+        raise ValueError(
+            f"Invalid default_role '{default_role}'; expected one of {_VALID_ROLES}"
+        )
+    out: Dict[str, Dict[str, object]] = {}
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if ":" in chunk:
+            ticker, role = chunk.split(":", 1)
+            ticker = ticker.strip().upper()
+            role = role.strip().lower()
+            if role not in _VALID_ROLES:
+                raise ValueError(
+                    f"Invalid role '{role}' for candidate '{ticker}'; "
+                    f"expected one of {_VALID_ROLES}"
+                )
+        else:
+            ticker = chunk.strip().upper()
+            role = default_role
+        if not ticker:
+            continue
+        out[ticker] = {
+            "role": role,
+            "is_candidate": True,
+            "quantity": 0,
+            "avg_cost": 0,
+            "currency": "USD",
+        }
+    return out
+
+
+def parse_cash_input(raw: Optional[str]) -> CashHoldings:
+    """Parse the ``--cash`` flag into a ``CashHoldings`` snapshot.
+
+    Format: ``"MEP=3000,CABLE=1500,ARS=750000"``. Keys are case-insensitive;
+    only ``MEP``, ``CABLE``, ``ARS`` are recognised. Comma is reserved as
+    the entry separator — decimals MUST use period (e.g. ``MEP=3000.50``).
+    """
+    if not raw:
+        return CashHoldings()
+
+    mep = 0.0
+    cable = 0.0
+    ars = 0.0
+    for chunk in raw.split(","):
+        chunk = chunk.strip()
+        if not chunk:
+            continue
+        if "=" not in chunk:
+            raise ValueError(
+                f"Invalid --cash entry '{chunk}'; expected format KEY=VALUE."
+            )
+        key, value = chunk.split("=", 1)
+        key = key.strip().upper()
+        value = value.strip()
+        try:
+            amount = float(value)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid amount '{value}' for currency '{key}'."
+            ) from e
+        if amount < 0:
+            raise ValueError(f"Negative cash amount '{value}' for {key}.")
+        if key == "MEP":
+            mep = amount
+        elif key == "CABLE":
+            cable = amount
+        elif key == "ARS":
+            ars = amount
+        else:
+            raise ValueError(
+                f"Unknown currency '{key}' in --cash; expected MEP, CABLE, or ARS."
+            )
+    return CashHoldings(mep_usd=mep, cable_usd=cable, ars_native=ars)
 
 
 def get_portfolio_date() -> str:

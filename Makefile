@@ -51,9 +51,10 @@ test-all:
 
 ## Interactive portfolio analysis (prompts for tickers/CSV and date)
 portfolio:
-	$(PYTHON) -m cli.main portfolio --max-concurrency $(MAX_CONCURRENCY) --types "$(TYPES)"
+	$(PYTHON) -m cli.main portfolio --max-concurrency $(MAX_CONCURRENCY) --types "$(TYPES)" \
+	    $(if $(BROKER_FEATURES),--broker-features "$(BROKER_FEATURES)",)
 
-## Portfolio from a positions CSV (usage: make portfolio-positions POSITIONS=/path/to/file.csv [DATE=YYYY-MM-DD] [CANDIDATES=NVO:tactical,GOOGL:anchor] [CASH=MEP=3000,ARS=750000] [ARS_MEP_RATE=1200])
+## Portfolio from a positions CSV (usage: make portfolio-positions POSITIONS=/path/to/file.csv [DATE=YYYY-MM-DD] [CANDIDATES=NVO:tactical,GOOGL:anchor] [CASH=MEP=3000,ARS=750000] [ARS_MEP_RATE=1200] [ARS_CABLE_RATE=1250] [BROKER_FEATURES=gtd,stop_loss,bracket])
 portfolio-positions:
 	@if [ -z "$(POSITIONS)" ]; then echo "Error: POSITIONS=/path/to/file.csv is required"; exit 1; fi
 	$(PYTHON) -m cli.main portfolio \
@@ -67,7 +68,7 @@ portfolio-positions:
 	    $(if $(ARS_CABLE_RATE),--ars-cable-rate $(ARS_CABLE_RATE),) \
 	    $(if $(BROKER_FEATURES),--broker-features "$(BROKER_FEATURES)",)
 
-## Portfolio from a comma-separated ticker list (usage: make portfolio-tickers TICKERS=NVDA,AMZN [DATE=YYYY-MM-DD])
+## Portfolio from a comma-separated ticker list (usage: make portfolio-tickers TICKERS=NVDA,AMZN [DATE=YYYY-MM-DD] [CANDIDATES=NVO:tactical] [CASH=MEP=3000] [ARS_MEP_RATE=1200] [ARS_CABLE_RATE=1250] [BROKER_FEATURES=gtd])
 portfolio-tickers:
 	@if [ -z "$(TICKERS)" ]; then echo "Error: TICKERS=NVDA,AMZN is required"; exit 1; fi
 	$(PYTHON) -m cli.main portfolio \

@@ -2,6 +2,8 @@ from langchain_core.messages import AIMessage
 import time
 import json
 
+from tradingagents.agents.utils.message_utils import content_to_text
+
 
 def create_safe_debator(llm):
     def safe_node(state) -> dict:
@@ -35,7 +37,7 @@ Engage by questioning their optimism and emphasizing the potential downsides the
 
         response = llm.invoke(prompt)
 
-        argument = f"Safe Analyst: {response.content}"
+        argument = f"Safe Analyst: {content_to_text(response.content)}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

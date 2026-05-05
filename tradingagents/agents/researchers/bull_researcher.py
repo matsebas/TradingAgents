@@ -2,6 +2,8 @@ from langchain_core.messages import AIMessage
 import time
 import json
 
+from tradingagents.agents.utils.message_utils import content_to_text
+
 
 def create_bull_researcher(llm, memory):
     def bull_node(state) -> dict:
@@ -44,7 +46,7 @@ Use this information to deliver a compelling bull argument, refute the bear's co
 
         response = llm.invoke(prompt)
 
-        argument = f"Bull Analyst: {response.content}"
+        argument = f"Bull Analyst: {content_to_text(response.content)}"
 
         new_investment_debate_state = {
             "history": history + "\n" + argument,

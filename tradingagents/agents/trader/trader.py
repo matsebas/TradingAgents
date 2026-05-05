@@ -2,6 +2,7 @@ import functools
 import time
 import json
 
+from tradingagents.agents.utils.message_utils import content_to_text
 from tradingagents.agents.utils.portfolio_context import format_portfolio_context
 
 
@@ -69,7 +70,7 @@ def create_trader(llm, memory):
 
         return {
             "messages": [result],
-            "trader_investment_plan": result.content,
+            "trader_investment_plan": content_to_text(result.content),
             "sender": name,
         }
 

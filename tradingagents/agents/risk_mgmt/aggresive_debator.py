@@ -1,6 +1,8 @@
 import time
 import json
 
+from tradingagents.agents.utils.message_utils import content_to_text
+
 
 def create_risky_debator(llm):
     def risky_node(state) -> dict:
@@ -34,7 +36,7 @@ Engage actively by addressing any specific concerns raised, refuting the weaknes
 
         response = llm.invoke(prompt)
 
-        argument = f"Risky Analyst: {response.content}"
+        argument = f"Risky Analyst: {content_to_text(response.content)}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

@@ -1,6 +1,8 @@
 import time
 import json
 
+from tradingagents.agents.utils.message_utils import content_to_text
+
 
 def create_neutral_debator(llm):
     def neutral_node(state) -> dict:
@@ -34,7 +36,7 @@ Engage actively by analyzing both sides critically, addressing weaknesses in the
 
         response = llm.invoke(prompt)
 
-        argument = f"Neutral Analyst: {response.content}"
+        argument = f"Neutral Analyst: {content_to_text(response.content)}"
 
         new_risk_debate_state = {
             "history": history + "\n" + argument,

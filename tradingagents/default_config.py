@@ -21,7 +21,7 @@ DEFAULT_CONFIG = {
     "mechanical_llm": "gemini-3.1-flash-lite-preview",
     "backend_url": "https://api.openai.com/v1",  # Not used for Google provider
     # Gemini settings
-    "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
+    "gemini_api_key": os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "",
     "gemini_model": "gemini-3-flash-preview",
     # Debate and discussion settings
     "max_debate_rounds": 1,

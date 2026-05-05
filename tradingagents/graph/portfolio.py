@@ -82,7 +82,8 @@ class TickerProgressState:
     status: str = "pending"  # pending | running | completed | error
     started_at: Optional[float] = None
     ended_at: Optional[float] = None
-    final_label: Optional[str] = None  # short decision or error summary
+    final_label: Optional[str] = None  # short decision (BUY/SELL/HOLD/done)
+    error_label: Optional[str] = None  # full error message (own column)
 
 
 class PortfolioProgress:
@@ -132,11 +133,13 @@ class PortfolioProgress:
         st.ended_at = time.time()
         if error:
             st.status = "error"
-            st.final_label = error[:60]
+            st.final_label = "—"
+            st.error_label = error
             st.phase = "[red]failed[/red]"
         else:
             st.status = "completed"
             st.final_label = _extract_short_decision(decision) or "done"
+            st.error_label = None
             st.phase = "[green]done[/green]"
         self._refresh()
 
@@ -176,13 +179,14 @@ class PortfolioProgress:
             title="Portfolio progress",
             show_header=True,
             header_style="bold magenta",
-            expand=False,
+            expand=True,
         )
-        table.add_column("Ticker", style="cyan", no_wrap=True, width=10)
-        table.add_column("Status", justify="center", width=14)
-        table.add_column("Phase", style="white", width=22)
-        table.add_column("Elapsed", justify="right", width=8)
-        table.add_column("Result", overflow="fold", width=30)
+        table.add_column("Ticker", style="cyan", no_wrap=True, ratio=1)
+        table.add_column("Status", justify="center", ratio=1)
+        table.add_column("Phase", style="white", ratio=2)
+        table.add_column("Elapsed", justify="right", no_wrap=True, ratio=1)
+        table.add_column("Result", overflow="fold", ratio=1)
+        table.add_column("Errors", style="red", overflow="fold", ratio=4)
 
         now = time.time()
         for st in self.states.values():
@@ -205,7 +209,7 @@ class PortfolioProgress:
             if st.final_label is None:
                 result_cell = ""
             elif st.status == "error":
-                result_cell = f"[red]{st.final_label}[/red]"
+                result_cell = "[red]—[/red]"
             else:
                 color = {
                     "BUY": "bold green",
@@ -214,7 +218,16 @@ class PortfolioProgress:
                 }.get(st.final_label, "white")
                 result_cell = f"[{color}]{st.final_label}[/{color}]"
 
-            table.add_row(st.ticker, status_cell, st.phase, elapsed_cell, result_cell)
+            error_cell = st.error_label or ""
+
+            table.add_row(
+                st.ticker,
+                status_cell,
+                st.phase,
+                elapsed_cell,
+                result_cell,
+                error_cell,
+            )
 
         return table
 

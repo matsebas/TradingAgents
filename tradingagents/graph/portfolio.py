@@ -100,6 +100,11 @@ class PortfolioProgress:
             t: TickerProgressState(ticker=t) for t in tickers
         }
         self._live: Live | None = None
+        # Reuse a single Spinner across renders. Recreating the Spinner on
+        # every _render() resets its frame counter and yields a renderable
+        # whose height/shape rich.Live tracks inconsistently — that's what
+        # makes the dashboard header stack on top of itself in the terminal.
+        self._spinner = Spinner("dots", text="[cyan]running[/cyan]")
 
     # --- progress updates -------------------------------------------------
 
@@ -141,8 +146,9 @@ class PortfolioProgress:
         self._live = Live(
             self._render(),
             console=self.console,
-            refresh_per_second=4,
+            refresh_per_second=2,
             transient=False,
+            vertical_overflow="visible",
             # Do NOT let Live hijack stdout/stderr — the CLI wraps this block
             # with contextlib.redirect_stdout to send vendor prints to a log
             # file, and Live's own redirect would override that.
@@ -170,13 +176,13 @@ class PortfolioProgress:
             title="Portfolio progress",
             show_header=True,
             header_style="bold magenta",
-            expand=True,
+            expand=False,
         )
-        table.add_column("Ticker", style="cyan", no_wrap=True)
-        table.add_column("Status", justify="center", width=12)
-        table.add_column("Phase", style="white")
-        table.add_column("Elapsed", justify="right", width=10)
-        table.add_column("Result", overflow="fold")
+        table.add_column("Ticker", style="cyan", no_wrap=True, width=10)
+        table.add_column("Status", justify="center", width=14)
+        table.add_column("Phase", style="white", width=22)
+        table.add_column("Elapsed", justify="right", width=8)
+        table.add_column("Result", overflow="fold", width=30)
 
         now = time.time()
         for st in self.states.values():
@@ -184,7 +190,7 @@ class PortfolioProgress:
             if st.status == "pending":
                 status_cell = "[dim]pending[/dim]"
             elif st.status == "running":
-                status_cell = Spinner("dots", text="[cyan]running[/cyan]")
+                status_cell = self._spinner
             elif st.status == "completed":
                 status_cell = "[green]✓ done[/green]"
             else:

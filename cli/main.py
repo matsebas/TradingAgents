@@ -1463,13 +1463,12 @@ def portfolio(
 
     from tradingagents.graph.portfolio import PortfolioProgress, PortfolioReporter
 
-    # Bind the live dashboard to stderr (not stdout) so it stays decoupled
-    # from the contextlib.redirect_stdout below — otherwise rich's Live
-    # rechecks isatty() against the redirected file and falls back to
-    # printing each frame as a new line, stacking duplicate headers.
-    # ``force_terminal=True`` keeps cursor-based refresh on even when the
-    # caller pipes stderr somewhere weird.
-    dashboard_console = RichConsole(file=sys.stderr, force_terminal=True)
+    # Bind a console to the real stdout BEFORE redirecting, so the live
+    # dashboard keeps rendering to the terminal while vendor prints go to
+    # the log file. ``force_terminal=True`` so rich keeps cursor-based
+    # refresh enabled even if isatty() check is called against a different
+    # ``sys.stdout`` later.
+    dashboard_console = RichConsole(file=sys.stdout, force_terminal=True)
 
     liquidity_dict = liquidity.to_dict() if liquidity is not None else None
 

@@ -150,6 +150,20 @@ class TradingAgentsGraph:
         self.trader_memory = FinancialSituationMemory("trader_memory", self.config)
         self.invest_judge_memory = FinancialSituationMemory("invest_judge_memory", self.config)
         self.risk_manager_memory = FinancialSituationMemory("risk_manager_memory", self.config)
+        self.portfolio_manager_memory = FinancialSituationMemory(
+            "portfolio_manager_memory", self.config
+        )
+
+        # Cross-ticker meta-judge — runs after all per-ticker Risk Judges and
+        # applies the user-defined 4-step framework (Underlying / Local / Fit /
+        # Execution) on top of the aggregate book view.
+        from tradingagents.agents.managers.portfolio_manager import (
+            create_portfolio_manager,
+        )
+
+        self.portfolio_manager = create_portfolio_manager(
+            self.deep_thinking_llm, self.portfolio_manager_memory
+        )
 
         # Create tool nodes
         self.tool_nodes = self._create_tool_nodes()
@@ -426,6 +440,30 @@ class TradingAgentsGraph:
                     )
 
         return await asyncio.gather(*(run_one(t) for t in all_tickers))
+
+    def synthesize_portfolio(
+        self,
+        results,
+        trade_date: str,
+        holdings: Dict[str, Dict[str, Any]] | None = None,
+        liquidity: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Run the cross-ticker Portfolio Manager on a finished batch.
+
+        Recomputes the aggregate from ``holdings`` so the manager sees the
+        same book view that was injected into each Risk Judge. Returns the
+        synthesizer's dict (``narrative`` + metadata). Errors are caught
+        inside the synthesizer; this method never raises so the report
+        writer can still produce the markdown.
+        """
+        portfolio_agg = compute_portfolio_aggregate(holdings)
+        agg_dict = portfolio_agg.to_dict() if portfolio_agg is not None else None
+        return self.portfolio_manager(
+            results,
+            portfolio_aggregate=agg_dict,
+            liquidity=liquidity,
+            trade_date=trade_date,
+        )
 
     def _log_state(self, ticker, trade_date, final_state):
         """Persist the final state to a per-ticker JSON file."""

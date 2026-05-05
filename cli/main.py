@@ -1500,8 +1500,25 @@ def portfolio(
     reporter.render_table(
         results, trade_date, pppc_by_ticker=pppc_by_ticker or None
     )
+
+    # Cross-ticker Portfolio Manager — runs only when at least one ticker
+    # finished cleanly. Failures are caught inside synthesize_portfolio so
+    # the rest of the report still gets written.
+    synthesis = None
+    if any(r.ok for r in results):
+        with console.status("[bold cyan]Synthesizing cross-ticker view…"):
+            try:
+                synthesis = ta.synthesize_portfolio(
+                    results,
+                    trade_date,
+                    holdings=holdings or None,
+                    liquidity=liquidity_dict,
+                )
+            except Exception as exc:  # noqa: BLE001 — never block the report
+                synthesis = {"narrative": None, "error": f"{type(exc).__name__}: {exc}"}
+
     json_path = reporter.save_json(results, trade_date)
-    md_path = reporter.save_markdown(results, trade_date)
+    md_path = reporter.save_markdown(results, trade_date, synthesis=synthesis)
     csv_path = reporter.save_csv(results, trade_date)
     console.print(
         f"\n[dim]Aggregated reports saved:\n"

@@ -719,8 +719,15 @@ class PortfolioReporter:
         results: Iterable[PortfolioResult],
         trade_date: str,
         out_dir: str | Path = "reports",
+        synthesis: dict[str, Any] | None = None,
     ) -> Path:
-        """Write a human-readable Markdown summary with the aggregate table."""
+        """Write a human-readable Markdown summary with the aggregate table.
+
+        When ``synthesis`` is provided (from
+        ``TradingAgentsGraph.synthesize_portfolio``), its ``narrative`` is
+        rendered at the top of the report so the Portfolio Manager's verdict
+        is the first thing the reader sees, before the per-ticker drill-down.
+        """
         results = list(results)
         out_path = Path(out_dir)
         out_path.mkdir(parents=True, exist_ok=True)
@@ -746,6 +753,20 @@ class PortfolioReporter:
             lines.append("")
             lines.append(distribution)
         lines.append("")
+
+        if synthesis and synthesis.get("narrative"):
+            lines.append("## 🎯 Portfolio Manager — Veredicto Estratégico")
+            lines.append("")
+            lines.append(str(synthesis["narrative"]))
+            lines.append("")
+            lines.append("---")
+            lines.append("")
+        elif synthesis and synthesis.get("error"):
+            lines.append(
+                f"> ⚠️ Portfolio Manager skipped: {synthesis['error']}"
+            )
+            lines.append("")
+
         lines.append("| Ticker | Decision | Duration | Log | Error |")
         lines.append("|--------|----------|---------:|-----|-------|")
         for r in results:

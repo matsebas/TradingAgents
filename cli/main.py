@@ -1487,8 +1487,16 @@ def portfolio(
         t for t in candidate_holdings.keys() if t not in resolved
     ]
 
-    with log_file.open("w", encoding="utf-8") as log_fh, contextlib.redirect_stdout(log_fh):
-        # stderr stays on the terminal so unexpected tracebacks still surface.
+    with log_file.open("w", encoding="utf-8") as log_fh, \
+            contextlib.redirect_stdout(log_fh), \
+            contextlib.redirect_stderr(log_fh):
+        # stderr MUST be redirected too — yfinance/tqdm + langchain warnings
+        # write to stderr during the run and would interleave with rich.Live's
+        # cursor-up sequences, leaving "ghost headers" in the terminal scrollback.
+        # The dashboard_console was bound to the original sys.stdout BEFORE the
+        # redirect (above), so it keeps writing to the terminal independently.
+        # Trade-off: tracebacks land in `log_fh` instead of on screen — check
+        # `eval_results/_portfolio/portfolio_<DATE>.log` if a run fails silently.
         with PortfolioProgress(progress_tickers, console=dashboard_console) as progress:
             results = asyncio.run(_run(progress))
 

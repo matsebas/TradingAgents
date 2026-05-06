@@ -293,13 +293,88 @@ def _is_broker_restricted(features: set[str]) -> bool:
     return not (has_stop and has_bracket)
 
 
+_PM_ACTIONABLE = {"BUY", "SELL", "TRIM", "BLOCK", "WATCHLIST"}
+
+
+def _pm_override_row(r: "PortfolioResult") -> tuple[str, str, str, str] | None:
+    """Build a (action, entry, qty, exit) tuple from a PM override.
+
+    Returns ``None`` when the override is missing, set to a non-actionable
+    value (HOLD/NULL), or empty — caller falls back to the Risk Judge
+    structured decision. The Action label always carries a ``(PM)`` marker
+    so the user can distinguish meta-judge overrides from per-ticker
+    Risk Judge actions in the same table.
+    """
+    ov = r.pm_override
+    if not ov:
+        return None
+    action_kind = (ov.get("action") or "").upper()
+    if action_kind not in _PM_ACTIONABLE:
+        return None
+
+    state = r.state or {}
+    ctx = state.get("portfolio_context") or {}
+    is_cand = bool(ctx.get("is_candidate"))
+
+    label_map = {
+        "BUY": ("**ADD** (initiate, PM)" if is_cand else "**ADD** (scale up, PM)"),
+        "SELL": "**TRIM / EXIT** (PM)",
+        "TRIM": "**TRIM** (PM)",
+        "BLOCK": "REJECT (PM)",
+        "WATCHLIST": "WATCHLIST (PM)",
+    }
+    action_label = label_map.get(action_kind, f"{action_kind} (PM)")
+
+    limit = ov.get("limit_price")
+    units = ov.get("size_units")
+    usd = ov.get("size_usd")
+    trim_pct = ov.get("trim_pct")
+    stop = ov.get("stop_manual_close")
+    target = ov.get("target")
+
+    if action_kind in ("BLOCK", "WATCHLIST"):
+        entry_str = f"${limit:,.2f}" if limit else "—"
+    elif limit is not None:
+        entry_str = f"${limit:,.2f} GTD limit"
+    else:
+        entry_str = "—"
+
+    qty_parts: list[str] = []
+    if units is not None and units != 0:
+        qty_parts.append(f"{int(units)} units")
+    if usd is not None and usd != 0:
+        qty_parts.append(f"${usd:,.0f} USD")
+    if trim_pct is not None and trim_pct != 0:
+        qty_parts.append(f"trim {trim_pct:g}%")
+    qty_str = " / ".join(qty_parts) or "—"
+
+    exit_parts: list[str] = []
+    if stop is not None:
+        exit_parts.append(
+            f"Monitor: if close < ${stop:,.2f} → GTD sell limit at next session"
+        )
+    if target is not None:
+        exit_parts.append(f"Target: ${target:,.2f} (parcial)")
+    rationale = (ov.get("rationale") or "").strip()
+    if rationale:
+        exit_parts.append(rationale[:120])
+    exit_str = "; ".join(exit_parts) if exit_parts else "—"
+
+    return action_label, entry_str, qty_str, exit_str
+
+
 def _render_broker_orders(results: list["PortfolioResult"]) -> list[str]:
     """Render the consolidated GTD-actionable orders section.
 
     Only emits when at least one result indicates a restricted broker
-    (e.g. ``broker_features=["gtd"]``). Reads ``trade_decision_structured``
-    from each result's state and extracts the entry plan + stop level
-    expressed as plain GTD instructions the user can take to his broker.
+    (e.g. ``broker_features=["gtd"]``). For each ticker:
+
+    1. If the Portfolio Manager attached a ``pm_override`` with an
+       actionable verb (BUY/SELL/TRIM/BLOCK/WATCHLIST), the row reflects
+       the **meta-judge** view — clearly tagged ``(PM)`` so the user
+       knows the cross-ticker layer overrode the per-ticker Risk Judge.
+    2. Otherwise the row is built from ``trade_decision_structured``
+       (the per-ticker Risk Judge), as before.
     """
     if not results:
         return []
@@ -320,7 +395,8 @@ def _render_broker_orders(results: list["PortfolioResult"]) -> list[str]:
     lines.append(
         "_Listo para llevar al broker. Entries son limit GTD; exits son "
         "niveles a monitorear manualmente — si el precio toca el nivel, "
-        "vas al broker y ponés una GTD sell._"
+        "vas al broker y ponés una GTD sell. Filas marcadas **(PM)** "
+        "vienen del Portfolio Manager y overridean al Risk Judge per-ticker._"
     )
     lines.append("")
     lines.append(
@@ -332,6 +408,17 @@ def _render_broker_orders(results: list["PortfolioResult"]) -> list[str]:
 
     any_row = False
     for r in results:
+        # PM override path — meta-judge wins when it spoke.
+        pm_row = _pm_override_row(r)
+        if pm_row is not None:
+            action, entry_str, qty_str, exit_str = pm_row
+            lines.append(
+                f"| {r.ticker} | {action} | {entry_str} | {qty_str} | {exit_str} |"
+            )
+            any_row = True
+            continue
+
+        # Fallback: per-ticker Risk Judge structured decision.
         state = r.state or {}
         structured = state.get("trade_decision_structured") or {}
         if not structured:
@@ -609,6 +696,7 @@ class PortfolioResult:
     state: dict[str, Any] | None = field(default=None, repr=False)
     error: str | None = None
     duration_s: float = 0.0
+    pm_override: dict[str, Any] | None = field(default=None)
 
     def __post_init__(self) -> None:
         # Normalise Gemini-shaped content to a plain string so downstream
@@ -623,7 +711,12 @@ class PortfolioResult:
         return self.error is None and self.decision is not None
 
     def short_decision(self) -> str:
-        """Extract BUY/SELL/HOLD if present, otherwise truncated raw text."""
+        """Extract BUY/SELL/HOLD from the per-ticker Risk Judge output.
+
+        This is the **raw** Risk Judge dictamen — does NOT factor in PM
+        overrides. Use ``effective_decision()`` for the post-override view
+        that the user should act on.
+        """
         if self.error:
             return "ERROR"
         text = _coerce_to_text(self.decision)
@@ -634,6 +727,20 @@ class PortfolioResult:
             if token in upper:
                 return token
         return (text.strip().splitlines()[0] or "-")[:40]
+
+    def effective_decision(self) -> str:
+        """Decision after applying the Portfolio Manager override (if any).
+
+        Risk Judge per-ticker is only authoritative when the cross-ticker PM
+        either agrees, stays silent on this ticker, or fails to emit a valid
+        override. When the PM does emit one, ``effective_decision`` from the
+        override wins — that's the whole point of the meta-judge layer.
+        """
+        if self.pm_override:
+            ed = self.pm_override.get("effective_decision")
+            if ed in ("BUY", "SELL", "HOLD"):
+                return ed
+        return self.short_decision()
 
 
 class PortfolioReporter:
@@ -786,8 +893,17 @@ class PortfolioReporter:
             )
             lines.append("")
 
-        lines.append("| Ticker | Decision | Duration | Log | Error |")
-        lines.append("|--------|----------|---------:|-----|-------|")
+        any_overrides = any(r.pm_override for r in results)
+        if any_overrides:
+            lines.append(
+                "| Ticker | Risk Judge | Final (PM) | Duration | Log | Error |"
+            )
+            lines.append(
+                "|--------|------------|------------|---------:|-----|-------|"
+            )
+        else:
+            lines.append("| Ticker | Decision | Duration | Log | Error |")
+            lines.append("|--------|----------|---------:|-----|-------|")
         for r in results:
             log_path = (
                 f"../eval_results/{r.ticker}/TradingAgentsStrategy_logs/"
@@ -797,8 +913,22 @@ class PortfolioReporter:
             )
             log_cell = f"[JSON]({log_path})" if r.ok else "-"
             error_cell = (r.error or "").replace("|", "\\|")
+            if any_overrides:
+                rj = r.short_decision()
+                final = r.effective_decision()
+                marker = " *" if r.pm_override else ""
+                lines.append(
+                    f"| {r.ticker} | {rj} | {final}{marker} | {r.duration_s:.1f}s | {log_cell} | {error_cell} |"
+                )
+            else:
+                lines.append(
+                    f"| {r.ticker} | {r.short_decision()} | {r.duration_s:.1f}s | {log_cell} | {error_cell} |"
+                )
+        if any_overrides:
+            lines.append("")
             lines.append(
-                f"| {r.ticker} | {r.short_decision()} | {r.duration_s:.1f}s | {log_cell} | {error_cell} |"
+                "_`*` indica que el Portfolio Manager overrideó al Risk Judge per-ticker — la columna_ "
+                "_`Final (PM)` es la decisión que el usuario debe ejecutar._"
             )
 
         broker_orders = _render_broker_orders(ok)

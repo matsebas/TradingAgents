@@ -1527,6 +1527,21 @@ def portfolio(
             except Exception as exc:  # noqa: BLE001 — never block the report
                 synthesis = {"narrative": None, "error": f"{type(exc).__name__}: {exc}"}
 
+    # Attach the PM's structured override per ticker so the renderers (broker
+    # orders, decisions table) reflect the meta-judge's decision instead of
+    # the per-ticker Risk Judge alone. Silent no-op if synthesis failed,
+    # rebalance is null, or the PM did not name this ticker.
+    if synthesis and isinstance(synthesis.get("structured"), dict):
+        actions_by_ticker = {
+            a["ticker"]: a
+            for a in synthesis["structured"].get("actions", [])
+            if isinstance(a, dict) and a.get("ticker")
+        }
+        for r in results:
+            override = actions_by_ticker.get(r.ticker)
+            if override:
+                r.pm_override = override
+
     json_path = reporter.save_json(results, trade_date)
     md_path = reporter.save_markdown(results, trade_date, synthesis=synthesis)
     csv_path = reporter.save_csv(results, trade_date)

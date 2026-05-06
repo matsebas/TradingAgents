@@ -15,10 +15,131 @@ rather than on the first portfolio run.
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
 from tradingagents.agents.utils.message_utils import content_to_text
+
+
+_VALID_ACTIONS = {"BUY", "SELL", "TRIM", "HOLD", "BLOCK", "WATCHLIST", "NULL"}
+_VALID_DECISIONS = {"BUY", "SELL", "HOLD"}
+_VALID_PRIORITIES = {"P1", "P2", "P3"}
+_VALID_REGIMES = {"normal", "stress"}
+_FENCED_JSON_RE = re.compile(r"```json\s*(\{.*?\})\s*```", re.DOTALL)
+
+
+def _extract_pm_json(narrative: str) -> dict[str, Any] | None:
+    """Pull the fenced JSON block emitted at the end of the manager's response.
+
+    The prompt requires a single ```json … ``` block. We grab the LAST match
+    (the prose may show schema examples earlier) and parse it. Returns None
+    if no valid block is found — callers fall back to per-ticker Risk Judge
+    decisions when this happens.
+    """
+    if not narrative:
+        return None
+    matches = _FENCED_JSON_RE.findall(narrative)
+    if not matches:
+        return None
+    raw = matches[-1].strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    return parsed
+
+
+def _normalise_pm_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Coerce a parsed PM payload into a strict, typed dict.
+
+    Drops unknown enum values, clamps numeric fields, and silently discards
+    malformed action entries. Returns the cleaned payload — never raises so
+    the report still writes.
+    """
+    regime = payload.get("regime")
+    if regime not in _VALID_REGIMES:
+        regime = "normal"
+
+    triggers = payload.get("regime_triggers") or []
+    if not isinstance(triggers, list):
+        triggers = []
+    triggers = [str(t) for t in triggers if t]
+
+    rebalance_null = bool(payload.get("rebalance_null"))
+
+    raw_actions = payload.get("actions") or []
+    if not isinstance(raw_actions, list):
+        raw_actions = []
+
+    actions: list[dict[str, Any]] = []
+    for entry in raw_actions:
+        if not isinstance(entry, Mapping):
+            continue
+        ticker = entry.get("ticker")
+        if not isinstance(ticker, str) or not ticker.strip():
+            continue
+        action = entry.get("action")
+        if action not in _VALID_ACTIONS:
+            continue
+        effective = entry.get("effective_decision")
+        if effective not in _VALID_DECISIONS:
+            # Sensible default mapping when the LLM forgets the field.
+            effective = {
+                "BUY": "BUY",
+                "SELL": "SELL",
+                "TRIM": "SELL",
+                "HOLD": "HOLD",
+                "BLOCK": "HOLD",
+                "WATCHLIST": "HOLD",
+                "NULL": "HOLD",
+            }[action]
+        priority = entry.get("priority")
+        if priority not in _VALID_PRIORITIES:
+            priority = "P3"
+
+        def _num(key: str) -> float | None:
+            v = entry.get(key)
+            if v is None:
+                return None
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                return None
+
+        codes = entry.get("rationale_codes") or []
+        if not isinstance(codes, list):
+            codes = []
+        codes = [str(c) for c in codes if c]
+
+        actions.append(
+            {
+                "ticker": ticker.strip(),
+                "priority": priority,
+                "action": action,
+                "effective_decision": effective,
+                "size_usd": _num("size_usd"),
+                "size_units": _num("size_units"),
+                "trim_pct": _num("trim_pct"),
+                "limit_price": _num("limit_price"),
+                "stop_manual_close": _num("stop_manual_close"),
+                "target": _num("target"),
+                "rationale_codes": codes,
+                "rationale": str(entry.get("rationale") or "").strip(),
+                "override_rj": bool(entry.get("override_rj")),
+            }
+        )
+
+    return {
+        "regime": regime,
+        "regime_triggers": triggers,
+        "rebalance_null": rebalance_null,
+        "actions": actions,
+        "capital_destination": (payload.get("capital_destination") or None),
+        "notes": (payload.get("notes") or None),
+    }
 
 
 _PROMPT_PATH = (
@@ -246,11 +367,15 @@ def create_portfolio_manager(llm, memory):
                 "error": f"{type(exc).__name__}: {exc}",
             }
 
+        parsed = _extract_pm_json(narrative)
+        structured = _normalise_pm_payload(parsed) if parsed is not None else None
+
         return {
             "narrative": narrative.strip() or None,
             "raw_response": narrative,
             "skipped": skipped,
             "model": getattr(llm, "model", None),
+            "structured": structured,
         }
 
     return synthesize

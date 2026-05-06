@@ -204,3 +204,67 @@ Lecciones que aplican directamente al book de hoy. Si no hay match relevante, es
 6. **Override del Risk Judge es legítimo y debe ser explícito** cuando una regla dura lo demanda
 
 Si una recomendación contradice una de estas reglas, no la emitas. Si querés emitirla igual, es bug del prompt — flagealo en una sección final *"⚠ Conflicto de jerarquía detectado"* y ofrecé la versión que respeta el orden, indicando qué regla forzaría la otra.
+
+---
+
+## 7. Bloque estructurado para el sistema (OBLIGATORIO)
+
+Después de la prosa de las secciones 1-6, emití **un único bloque** fenced ` ```json ` ... ` ``` ` con el siguiente esquema. Este JSON es la **fuente de verdad** que consume el pipeline para armar la tabla broker-actionable y la tabla de decisiones del reporte; la prosa de arriba es para lectura humana. **Si los dos disienten, gana el JSON** — entonces no dejes que disienten. Si no estás emitiendo este bloque, tu output está incompleto.
+
+```json
+{
+  "regime": "normal",
+  "regime_triggers": ["VIX = 22.4", "brecha CCL = 12%", "spread soberano = 950bps"],
+  "rebalance_null": false,
+  "actions": [
+    {
+      "ticker": "NVDA",
+      "priority": "P1",
+      "action": "TRIM",
+      "effective_decision": "SELL",
+      "size_usd": 1234.56,
+      "size_units": 47,
+      "trim_pct": 20,
+      "limit_price": 880.0,
+      "stop_manual_close": 780.0,
+      "target": 950.0,
+      "rationale_codes": ["S3", "CONC-C", "OVERRIDE-RJ"],
+      "rationale": "Cluster semicon 61.1% > ceiling 40%",
+      "override_rj": true
+    },
+    {
+      "ticker": "SPY",
+      "priority": "P2",
+      "action": "BUY",
+      "effective_decision": "BUY",
+      "size_usd": 800.0,
+      "size_units": 1,
+      "limit_price": 515.0,
+      "stop_manual_close": null,
+      "target": null,
+      "rationale_codes": ["S3", "ANCHOR"],
+      "rationale": "Recomponer ancla hacia 40% absorbiendo capital de NVDA trim",
+      "override_rj": false
+    }
+  ],
+  "capital_destination": "money_market_usd",
+  "notes": "Liquidez liberada del NVDA trim NO se asigna a candidatos hoy."
+}
+```
+
+**Reglas estrictas del JSON**:
+
+- `regime`: exactamente `"normal"` o `"stress"`. Sin variantes.
+- `regime_triggers`: array de strings con los triggers que viste, citando números cuando aplique. Vacío si `regime="normal"` y no querés justificar.
+- `rebalance_null`: `true` si y sólo si la respuesta correcta del día es no operar (todos los pasos pasan limpio). Si `true`, `actions` puede ir vacío.
+- `actions`: una entrada por cada ticker para el cual hay una acción (incluyendo HOLD explícito si querés sobrescribir el Risk Judge a HOLD por razones de cartera). Si no aparece un ticker del input, se interpreta que respetás el dictamen del Risk Judge per-ticker.
+- `priority`: `"P1"` (hoy), `"P2"` (esta semana) o `"P3"` (monitorear).
+- `action`: `"BUY"`, `"SELL"`, `"TRIM"`, `"HOLD"`, `"BLOCK"`, `"WATCHLIST"` o `"NULL"`. `BLOCK` = candidato rechazado, retirar de watchlist. `WATCHLIST` = mantener en seguimiento sin asignar capital. `NULL` = no operación.
+- `effective_decision`: `"BUY"`, `"SELL"` o `"HOLD"` — la decisión "corta" que va a la tabla de decisiones del reporte. `TRIM` mapea a `"SELL"`. `BLOCK` y `WATCHLIST` y `NULL` mapean a `"HOLD"`.
+- Campos numéricos: `size_usd`, `size_units`, `trim_pct`, `limit_price`, `stop_manual_close`, `target`. Usá `null` cuando no aplique. **Nunca strings con símbolos** (`"$880"` ❌, `880.0` ✓).
+- `rationale_codes`: array con los códigos relevantes (S1/S2/S3/S4, CONC-T, CONC-S, CONC-C, LIQ, MOM, REGIME, EXEC, TAX, OVERRIDE-RJ, ANCHOR, etc.).
+- `override_rj`: `true` si tu `effective_decision` discrepa del dictamen del Risk Judge per-ticker. Obliga a incluir `OVERRIDE-RJ` en `rationale_codes`.
+- `capital_destination`: a dónde va el capital liberado por SELLs/TRIMs. Valores típicos: `"money_market_usd"`, `"cash_mep"`, `"<TICKER>"` (por ejemplo `"SPY"`), `"none"`.
+- `notes`: comentario libre opcional.
+
+Si no podés emitir un campo numérico con confianza (no tenés el dato), poné `null` en lugar de inventar.

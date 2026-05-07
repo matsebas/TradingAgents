@@ -162,10 +162,12 @@ if not _SYSTEM_FRAMEWORK:
 def _summarize_ticker_for_prompt(result: Any) -> str:
     """Compress one PortfolioResult into a brief the manager can reason over.
 
-    Pulls the Risk Judge structured decision (the JSON block emitted at the
-    end of section 9), the role classification, and key portfolio-context
-    fields. Skips the full debate history — the Risk Judge already digested
-    it, replaying it here only burns tokens.
+    Pulls the Risk Judge structured decision (``trade_decision_structured``),
+    the role classification, and key portfolio-context fields. Computes
+    derived dollar values (cost basis, mark-to-market) so the manager can
+    fill ``size_usd`` / ``size_units`` when proposing trims without having
+    to multiply numbers itself. Skips the full debate history — the Risk
+    Judge already digested it.
     """
     ticker = result.ticker
     decision_short = result.short_decision()
@@ -179,34 +181,55 @@ def _summarize_ticker_for_prompt(result: Any) -> str:
     unrealized_return_pct = portfolio_ctx.get("unrealized_return_pct")
     weight = portfolio_ctx.get("cost_basis_weight_pct")
 
-    structured = state.get("structured_decision") or {}
+    # The state actually carries ``trade_decision_structured`` (set by the
+    # Risk Judge after JSON validation). Earlier the brief tried to read
+    # ``structured_decision`` and silently shipped an empty dict, leaving
+    # the manager without entry plans, stop levels or falsification tests.
+    structured = state.get("trade_decision_structured") or {}
     final_text = content_to_text(state.get("final_trade_decision"))
 
     lines = [f"## {ticker}"]
     lines.append(f"- Risk Judge decisión: **{decision_short}**")
-    lines.append(f"- Rol asignado: {role}{' (CANDIDATO, qty=0)' if is_candidate else ''}")
+    lines.append(
+        f"- Rol asignado: {role}"
+        f"{' (CANDIDATO, qty=0)' if is_candidate else ''}"
+    )
     if qty is not None and avg_cost is not None:
-        lines.append(f"- Posición: qty={qty}, avg_cost={avg_cost}")
+        cost_basis_usd = qty * avg_cost
+        lines.append(
+            f"- Posición: qty={qty}, avg_cost=${avg_cost:.2f}, "
+            f"cost basis ≈ ${cost_basis_usd:,.0f} USD"
+        )
+        if unrealized_return_pct is not None:
+            mtm_usd = cost_basis_usd * (1 + unrealized_return_pct / 100)
+            lines.append(
+                f"- Valor mark-to-market actual ≈ ${mtm_usd:,.0f} USD"
+            )
     if weight is not None:
         lines.append(f"- Peso en cartera: {weight:.1f}% (cost-basis)")
     if unrealized_return_pct is not None:
         lines.append(f"- P&L no realizado: {unrealized_return_pct:+.1f}%")
     if structured:
+        # Pull the keys the Risk Judge actually emits in
+        # ``trade_decision_structured``. These map directly onto the fields
+        # the PM is asked to fill (limit_price, stop_manual_close, etc.) so
+        # the LLM can reuse Risk Judge levels or override them explicitly.
         compact = {
             k: structured.get(k)
             for k in (
                 "decision",
-                "rationale_short",
-                "entry_trigger",
-                "exit_trigger",
-                "falsification",
-                "trailing_stop",
-                "is_flip",
+                "qty_change",
+                "entry_plan",
+                "stop_loss",
+                "triggers",
+                "falsification_criteria",
+                "entry_quality",
+                "rationale",
             )
-            if structured.get(k) is not None
+            if structured.get(k) not in (None, "", [], {})
         }
         if compact:
-            lines.append("- Risk Judge structured:")
+            lines.append("- Risk Judge structured (entry/exit + tesis):")
             lines.append("```json")
             lines.append(json.dumps(compact, ensure_ascii=False, indent=2))
             lines.append("```")

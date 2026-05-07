@@ -261,10 +261,15 @@ Después de la prosa de las secciones 1-6, emití **un único bloque** fenced ` 
 - `priority`: `"P1"` (hoy), `"P2"` (esta semana) o `"P3"` (monitorear).
 - `action`: `"BUY"`, `"SELL"`, `"TRIM"`, `"HOLD"`, `"BLOCK"`, `"WATCHLIST"` o `"NULL"`. `BLOCK` = candidato rechazado, retirar de watchlist. `WATCHLIST` = mantener en seguimiento sin asignar capital. `NULL` = no operación.
 - `effective_decision`: `"BUY"`, `"SELL"` o `"HOLD"` — la decisión "corta" que va a la tabla de decisiones del reporte. `TRIM` mapea a `"SELL"`. `BLOCK` y `WATCHLIST` y `NULL` mapean a `"HOLD"`.
-- Campos numéricos: `size_usd`, `size_units`, `trim_pct`, `limit_price`, `stop_manual_close`, `target`. Usá `null` cuando no aplique. **Nunca strings con símbolos** (`"$880"` ❌, `880.0` ✓).
+- Campos numéricos: `size_usd`, `size_units`, `trim_pct`, `limit_price`, `stop_manual_close`, `target`. **Nunca strings con símbolos** (`"$880"` ❌, `880.0` ✓).
 - `rationale_codes`: array con los códigos relevantes (S1/S2/S3/S4, CONC-T, CONC-S, CONC-C, LIQ, MOM, REGIME, EXEC, TAX, OVERRIDE-RJ, ANCHOR, etc.).
 - `override_rj`: `true` si tu `effective_decision` discrepa del dictamen del Risk Judge per-ticker. Obliga a incluir `OVERRIDE-RJ` en `rationale_codes`.
 - `capital_destination`: a dónde va el capital liberado por SELLs/TRIMs. Valores típicos: `"money_market_usd"`, `"cash_mep"`, `"<TICKER>"` (por ejemplo `"SPY"`), `"none"`.
 - `notes`: comentario libre opcional.
 
-Si no podés emitir un campo numérico con confianza (no tenés el dato), poné `null` en lugar de inventar.
+**Cuantificación obligatoria** (no acepta excusas):
+
+- Si `action` ∈ {`TRIM`, `SELL`, `BUY`}: **DEBÉS** llenar `size_units` Y `size_usd` con números concretos, no `null`. Tenés `qty`, `avg_cost` y la valoración mark-to-market en el brief de cada ticker — usalos para calcular: `size_units = qty * trim_pct/100` redondeado a entero, `size_usd = size_units * mark_to_market_per_unit`. Para TRIM también incluí `trim_pct`.
+- Si `action` ∈ {`TRIM`, `SELL`, `BUY`} y el Risk Judge per-ticker emitió un entry plan o stop_loss en su structured: reusá esos niveles como punto de partida para `limit_price` y `stop_manual_close`. Si los overrideás (porque tu tesis es distinta), justificalo en `rationale`. **Nunca dejes `limit_price` en `null`** para una acción ejecutable: el usuario necesita un número para llevar al broker.
+- Si genuinamente no podés calcular un campo (ej. no hay precio de mercado en el brief y la posición no tiene avg_cost), poné `null` y agregá una nota en `rationale` explicando qué falta.
+- Para `BLOCK`, `WATCHLIST`, `NULL`, `HOLD`: campos numéricos pueden ir todos en `null` o `0` — la acción no es ejecutable.

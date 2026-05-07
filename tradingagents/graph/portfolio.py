@@ -770,13 +770,15 @@ class PortfolioReporter:
         table.add_column("Error", style="red", overflow="fold")
 
         for r in results:
-            decision = r.short_decision()
+            decision = r.effective_decision()
             decision_color = {
                 "BUY": "[bold green]BUY[/bold green]",
                 "SELL": "[bold red]SELL[/bold red]",
                 "HOLD": "[bold yellow]HOLD[/bold yellow]",
                 "ERROR": "[bold red]ERROR[/bold red]",
             }.get(decision, decision)
+            if r.pm_override:
+                decision_color = f"{decision_color} [dim](PM)[/dim]"
 
             log_path = (
                 f"eval_results/{r.ticker}/TradingAgentsStrategy_logs/"
@@ -795,7 +797,7 @@ class PortfolioReporter:
 
     def _summary_panel(self, results: list[PortfolioResult]) -> Panel:
         total = len(results)
-        counter = Counter(r.short_decision() for r in results)
+        counter = Counter(r.effective_decision() for r in results)
         ok_count = sum(1 for r in results if r.ok)
         errors = total - ok_count
 
@@ -822,8 +824,10 @@ class PortfolioReporter:
             "results": [
                 {
                     "ticker": r.ticker,
-                    "decision_short": r.short_decision(),
+                    "decision_short": r.short_decision(),  # Risk Judge raw
+                    "decision_final": r.effective_decision(),  # post-PM-override
                     "decision_full": r.decision,
+                    "pm_override": r.pm_override,
                     "error": r.error,
                     "duration_s": round(r.duration_s, 2),
                     "log_path": (
@@ -862,7 +866,10 @@ class PortfolioReporter:
         total = len(results)
         ok = [r for r in results if r.ok]
         errors = [r for r in results if not r.ok]
-        counter = Counter(r.short_decision() for r in ok)
+        # Count post-override decisions so the headline matches what the user
+        # is actually told to execute. When the PM stays silent, this falls
+        # back to the per-ticker Risk Judge dictamen (short_decision).
+        counter = Counter(r.effective_decision() for r in ok)
 
         lines: list[str] = []
         lines.append(f"# Portfolio Analysis — {trade_date}")
@@ -946,7 +953,13 @@ class PortfolioReporter:
             lines.append("## Detailed decisions")
             for r in ok:
                 lines.append("")
-                lines.append(f"### {r.ticker} — {r.short_decision()}")
+                rj = r.short_decision()
+                final = r.effective_decision()
+                if r.pm_override and final != rj:
+                    header = f"### {r.ticker} — {final} *(PM override; Risk Judge: {rj})*"
+                else:
+                    header = f"### {r.ticker} — {final}"
+                lines.append(header)
                 lines.extend(_render_ticker_detail(r))
 
         file_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -970,6 +983,8 @@ class PortfolioReporter:
                 [
                     "ticker",
                     "decision_short",
+                    "decision_final",
+                    "pm_action",
                     "decision_full",
                     "error",
                     "duration_s",
@@ -987,6 +1002,8 @@ class PortfolioReporter:
                     [
                         r.ticker,
                         r.short_decision(),
+                        r.effective_decision(),
+                        (r.pm_override or {}).get("action", "") if r.pm_override else "",
                         (r.decision or "").strip(),
                         r.error or "",
                         f"{r.duration_s:.2f}",

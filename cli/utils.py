@@ -376,10 +376,10 @@ def select_shallow_thinking_agent(provider) -> str:
             ("Claude Sonnet 4 - High performance and excellent reasoning", "claude-sonnet-4-0"),
         ],
         "google": [
-            ("Gemini 3.0 Flash Preview - Latest fast model (recommended)", "gemini-3-flash-preview"),
-            ("Gemini 2.0 Flash-Lite - Cost efficiency and low latency", "gemini-2.0-flash-lite"),
-            ("Gemini 2.0 Flash - Next generation features, speed, and thinking", "gemini-2.0-flash"),
-            ("Gemini 2.5 Flash - Adaptive thinking, cost efficiency", "gemini-2.5-flash-preview-05-20"),
+            ("Gemini 3.6 Flash - Latest stable Flash, best speed/quality balance (recommended)", "gemini-3.6-flash"),
+            ("Gemini 3.5 Flash-Lite - Latest stable Flash-Lite, lowest cost and latency", "gemini-3.5-flash-lite"),
+            ("Gemini 3.5 Flash - Previous stable Flash generation", "gemini-3.5-flash"),
+            ("Gemini 2.5 Flash - Older stable generation, adaptive thinking", "gemini-2.5-flash"),
         ],
         "openrouter": [
             ("Meta: Llama 4 Scout", "meta-llama/llama-4-scout:free"),
@@ -439,10 +439,10 @@ def select_deep_thinking_agent(provider) -> str:
             ("Claude Opus 4 - Most powerful Anthropic model", "	claude-opus-4-0"),
         ],
         "google": [
-            ("Gemini 3.0 Flash Preview - Latest fast model (recommended)", "gemini-3-flash-preview"),
-            ("Gemini 2.5 Flash - Adaptive thinking, cost efficiency", "gemini-2.5-flash-preview-05-20"),
-            ("Gemini 3.1 Pro Preview", "gemini-3.1-pro-preview"),
-            ("Gemini 2.5 Pro", "gemini-2.5-pro-preview-06-05"),
+            ("Gemini 3.6 Flash - Latest stable Flash, best speed/quality balance (recommended)", "gemini-3.6-flash"),
+            ("Gemini 3.5 Flash - Previous stable Flash generation", "gemini-3.5-flash"),
+            ("Gemini 3.1 Pro Preview - Strongest reasoning, still preview (slower, pricier)", "gemini-3.1-pro-preview"),
+            ("Gemini 2.5 Pro - Stable Pro, for deeper analysis", "gemini-2.5-pro"),
         ],
         "openrouter": [
             ("DeepSeek V3 - a 685B-parameter, mixture-of-experts model", "deepseek/deepseek-chat-v3-0324:free"),

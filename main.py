@@ -8,8 +8,8 @@ load_dotenv()
 
 # Create a custom config
 config = DEFAULT_CONFIG.copy()
-config["deep_think_llm"] = "gemini-3-flash-preview"  # Use Gemini model
-config["quick_think_llm"] = "gemini-3-flash-preview"  # Use Gemini model
+config["deep_think_llm"] = "gemini-3.6-flash"  # Use Gemini model
+config["quick_think_llm"] = "gemini-3.6-flash"  # Use Gemini model
 config["max_debate_rounds"] = 1  # Increase debate rounds
 
 # Configure data vendors (default uses yfinance and alpha_vantage)

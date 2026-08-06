@@ -62,7 +62,7 @@ def test_client_creation():
         client = genai.Client(api_key=config.get("gemini_api_key"))
 
         print("✅ Cliente creado exitosamente")
-        print(f"   Usando modelo: {config.get('gemini_model', 'gemini-3-flash-preview')}\n")
+        print(f"   Usando modelo: {config.get('gemini_model', 'gemini-3.6-flash')}\n")
         return True
     except Exception as e:
         print(f"❌ Error creando cliente: {e}\n")

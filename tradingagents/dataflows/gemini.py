@@ -54,7 +54,7 @@ def get_stock_news_gemini(query, start_date, end_date):
     prompt = f"Can you search Social Media for {query} from {start_date} to {end_date}? Make sure you only get the data posted during that period."
 
     response = client.models.generate_content(
-        model=config.get("gemini_model", "gemini-3-flash-preview"),
+        model=config.get("gemini_model", "gemini-3.6-flash"),
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=1.0,
@@ -76,7 +76,7 @@ def get_global_news_gemini(curr_date, look_back_days=7, limit=5):
     prompt = f"Can you search global or macroeconomics news from {look_back_days} days before {curr_date} to {curr_date} that would be informative for trading purposes? Make sure you only get the data posted during that period. Limit the results to {limit} articles."
 
     response = client.models.generate_content(
-        model=config.get("gemini_model", "gemini-3-flash-preview"),
+        model=config.get("gemini_model", "gemini-3.6-flash"),
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=1.0,
@@ -98,7 +98,7 @@ def get_fundamentals_gemini(ticker, curr_date):
     prompt = f"Can you search Fundamental for discussions on {ticker} during of the month before {curr_date} to the month of {curr_date}. Make sure you only get the data posted during that period. List as a table, with PE/PS/Cash flow/ etc"
 
     response = client.models.generate_content(
-        model=config.get("gemini_model", "gemini-3-flash-preview"),
+        model=config.get("gemini_model", "gemini-3.6-flash"),
         contents=prompt,
         config=types.GenerateContentConfig(
             temperature=1.0,

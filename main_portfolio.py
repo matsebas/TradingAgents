@@ -34,8 +34,8 @@ async def main() -> None:
     config = DEFAULT_CONFIG.copy()
     # Use Gemini flash for both quick and deep thinking — keeps cost/latency low
     # across N parallel tickers.
-    config["quick_think_llm"] = "gemini-3-flash-preview"
-    config["deep_think_llm"] = "gemini-3-flash-preview"
+    config["quick_think_llm"] = "gemini-3.6-flash"
+    config["deep_think_llm"] = "gemini-3.6-flash"
     config["max_debate_rounds"] = 1
     config["max_risk_discuss_rounds"] = 1
 

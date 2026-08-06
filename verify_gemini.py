@@ -82,7 +82,7 @@ def test_gemini_connection():
         client = genai.Client(api_key=api_key)
 
         response = client.models.generate_content(
-            model=config.get("gemini_model", "gemini-3-flash-preview"),
+            model=config.get("gemini_model", "gemini-3.6-flash"),
             contents="Hello! Reply with just 'OK' if you can hear me.",
             config=types.GenerateContentConfig(
                 temperature=1.0,
@@ -105,7 +105,7 @@ def test_langchain_gemini():
     try:
         from langchain_google_genai import ChatGoogleGenerativeAI
 
-        llm = ChatGoogleGenerativeAI(model="gemini-3-flash-preview")
+        llm = ChatGoogleGenerativeAI(model="gemini-3.6-flash")
         response = llm.invoke("Say 'OK' if you work")
 
         # Handle different response formats

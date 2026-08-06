@@ -10,19 +10,19 @@ DEFAULT_CONFIG = {
     ),
     # LLM settings
     "llm_provider": "google",
-    "deep_think_llm": "gemini-3.5-flash",
-    "quick_think_llm": "gemini-3.5-flash",
+    "deep_think_llm": "gemini-3.6-flash",
+    "quick_think_llm": "gemini-3.6-flash",
     # Lighter models for tasks that don't need full Flash:
     # - analyst_llm: the 4 analysts (Market/Social/News/Fundamentals) which
     #   mostly summarise tool output.
     # - mechanical_llm: signal processor + reflector — pure pattern extraction.
     # If unset, both fall back to quick_think_llm.
-    "analyst_llm": "gemini-3.1-flash-lite",
-    "mechanical_llm": "gemini-3.1-flash-lite",
+    "analyst_llm": "gemini-3.5-flash-lite",
+    "mechanical_llm": "gemini-3.5-flash-lite",
     "backend_url": "https://api.openai.com/v1",  # Not used for Google provider
     # Gemini settings
     "gemini_api_key": os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY") or "",
-    "gemini_model": "gemini-3.5-flash",
+    "gemini_model": "gemini-3.6-flash",
     # Debate and discussion settings
     "max_debate_rounds": 1,
     "max_risk_discuss_rounds": 1,

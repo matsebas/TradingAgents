@@ -24,8 +24,8 @@
 ```python
 # tradingagents/default_config.py
 "llm_provider": "google"
-"deep_think_llm": "gemini-3-flash-preview"
-"quick_think_llm": "gemini-3-flash-preview"
+"deep_think_llm": "gemini-3.6-flash"
+"quick_think_llm": "gemini-3.6-flash"
 ```
 
 #### 2. **Data Vendors: Gemini** (en lugar de Alpha Vantage)
@@ -122,7 +122,7 @@ Todos estos agentes usan **Gemini** a través de `ChatGoogleGenerativeAI`:
 - ✅ **Risk Manager** - Gestión de riesgo
 - ✅ **Trader** - Decisiones de trading
 
-**Modelo:** `gemini-3-flash-preview`
+**Modelo:** `gemini-3.6-flash`
 
 ### 2. Data Vendors (Fuentes de Datos)
 
@@ -155,12 +155,12 @@ Todos estos agentes usan **Gemini** a través de `ChatGoogleGenerativeAI`:
 DEFAULT_CONFIG = {
     # LLM settings
     "llm_provider": "google",                    # Cambió de "openai"
-    "deep_think_llm": "gemini-3-flash-preview",  # Cambió de "o4-mini"
-    "quick_think_llm": "gemini-3-flash-preview", # Cambió de "gpt-4o-mini"
+    "deep_think_llm": "gemini-3.6-flash",  # Cambió de "o4-mini"
+    "quick_think_llm": "gemini-3.6-flash", # Cambió de "gpt-4o-mini"
     
     # Gemini settings
     "gemini_api_key": os.getenv("GEMINI_API_KEY", ""),
-    "gemini_model": "gemini-3-flash-preview",
+    "gemini_model": "gemini-3.6-flash",
     
     # Data vendors
     "data_vendors": {
@@ -183,7 +183,7 @@ from google.genai import types
 def get_stock_news_gemini(query, start_date, end_date):
     client = genai.Client(api_key=config.get("gemini_api_key"))
     response = client.models.generate_content(
-        model="gemini-3-flash-preview",
+        model="gemini-3.6-flash",
         contents=prompt,
         config=types.GenerateContentConfig(...),
         tools=[types.Tool(google_search=types.GoogleSearch())]
@@ -242,7 +242,7 @@ import google.generativeai as genai
 
 genai.configure(api_key=api_key)
 model = genai.GenerativeModel(
-    model_name="gemini-3-flash-preview",
+    model_name="gemini-3.6-flash",
     tools='google_search_retrieval'
 )
 response = model.generate_content(
@@ -256,7 +256,7 @@ from google.genai import types
 
 client = genai.Client(api_key=api_key)
 response = client.models.generate_content(
-    model="gemini-3-flash-preview",
+    model="gemini-3.6-flash",
     contents=prompt,
     config=types.GenerateContentConfig(...),
     tools=[types.Tool(google_search=types.GoogleSearch())]
@@ -310,7 +310,7 @@ python cli/main.py
 ```
 DEBUG: get_fundamentals - Primary: [gemini]
 DEBUG: get_news - Primary: [gemini]
-INFO: Using Google Gemini LLM (gemini-3-flash-preview)
+INFO: Using Google Gemini LLM (gemini-3.6-flash)
 ```
 
 ---
@@ -341,9 +341,9 @@ INFO: Using Google Gemini LLM (gemini-3-flash-preview)
 - ✅ Nunca te quedas sin datos
 
 ### 5. **Modelos Potentes**
-- ✅ `gemini-3-flash-preview` - Rápido y eficiente
-- ✅ `gemini-2.5-flash` - Versión estable
-- ✅ `gemini-2.5-pro` - Para análisis profundo
+- ✅ `gemini-3.6-flash` - Flash GA estable, rápido y eficiente (recomendado)
+- ✅ `gemini-3.5-flash-lite` - Flash-Lite GA estable, máxima velocidad y menor costo
+- ✅ `gemini-2.5-pro` - Pro GA estable, para análisis profundo (`gemini-3.1-pro-preview` y `gemini-3-pro-preview` siguen en preview, no GA)
 - ✅ Multimodal (texto, imágenes, video)
 
 ---

@@ -1437,8 +1437,8 @@ def portfolio(
     config = DEFAULT_CONFIG.copy()
     # Force flash models — running N tickers in parallel would be too costly
     # and slow with Pro. Override at call-site if you really want Pro.
-    config["quick_think_llm"] = "gemini-3-flash-preview"
-    config["deep_think_llm"] = "gemini-3-flash-preview"
+    config["quick_think_llm"] = "gemini-3.6-flash"
+    config["deep_think_llm"] = "gemini-3.6-flash"
     if broker_features is not None:
         # CLI override of the config default. Empty string disables all
         # broker awareness (legacy behaviour).

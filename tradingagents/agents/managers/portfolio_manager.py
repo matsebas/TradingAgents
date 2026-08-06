@@ -159,15 +159,20 @@ if not _SYSTEM_FRAMEWORK:
     raise RuntimeError(f"Prompt file {_PROMPT_PATH} is empty.")
 
 
-def _summarize_ticker_for_prompt(result: Any) -> str:
+def _summarize_ticker_for_prompt(
+    result: Any, *, pct_of_wealth: float | None = None
+) -> str:
     """Compress one PortfolioResult into a brief the manager can reason over.
 
     Pulls the Risk Judge structured decision (``trade_decision_structured``),
     the role classification, and key portfolio-context fields. Computes
     derived dollar values (cost basis, mark-to-market) so the manager can
     fill ``size_usd`` / ``size_units`` when proposing trims without having
-    to multiply numbers itself. Skips the full debate history — the Risk
-    Judge already digested it.
+    to multiply numbers itself. ``pct_of_wealth`` (when provided from the
+    wealth snapshot) gives the manager the cross-asset concentration —
+    the equity-sleeve weight ``cost_basis_weight_pct`` is misleading on
+    its own when most of the user's money lives in FCI / cash. Skips the
+    full debate history — the Risk Judge already digested it.
     """
     ticker = result.ticker
     decision_short = result.short_decision()
@@ -206,7 +211,9 @@ def _summarize_ticker_for_prompt(result: Any) -> str:
                 f"- Valor mark-to-market actual ≈ ${mtm_usd:,.0f} USD"
             )
     if weight is not None:
-        lines.append(f"- Peso en cartera: {weight:.1f}% (cost-basis)")
+        lines.append(f"- Peso en **equity sleeve**: {weight:.1f}% (cost-basis)")
+    if pct_of_wealth is not None:
+        lines.append(f"- Peso vs **patrimonio total**: {pct_of_wealth:.2f}%")
     if unrealized_return_pct is not None:
         lines.append(f"- P&L no realizado: {unrealized_return_pct:+.1f}%")
     if structured:
@@ -242,10 +249,155 @@ def _summarize_ticker_for_prompt(result: Any) -> str:
     return "\n".join(lines)
 
 
+def _summarize_wealth_snapshot(snap: Mapping[str, Any] | None) -> str:
+    """Render the cross-asset wealth view that the PM uses as denominator.
+
+    The previous brief showed the equity-only ``portfolio_aggregate`` plus a
+    standalone liquidity block. That made the manager believe the user's
+    tactical bucket was 61% of "the portfolio" when, against the user's
+    actual total wealth, it was closer to 10% — concentration ceilings
+    were being applied against the wrong base. This block fixes the
+    denominator: equity / fixed income / cash equivalent vs total wealth.
+    """
+    if not snap or not snap.get("total_wealth_usd"):
+        return "_(sin snapshot de patrimonio — corrida sin posiciones ni liquidez)_"
+
+    lines = ["## Patrimonio total y allocation por sleeve"]
+    total = snap.get("total_wealth_usd") or 0.0
+    lines.append(f"- **Patrimonio total**: ${total:,.0f} USD")
+    lines.append("")
+
+    equity = snap.get("equity") or {}
+    fi = snap.get("fixed_income") or {}
+    cash = snap.get("cash_equiv") or {}
+
+    eq_pct = equity.get("pct_of_wealth")
+    fi_pct = fi.get("pct_of_wealth")
+    cash_pct = cash.get("pct_of_wealth")
+    lines.append("| Sleeve | USD | % del patrimonio |")
+    lines.append("|--------|----:|-----------------:|")
+    lines.append(
+        f"| Equity (CEDEARs / acciones) | ${equity.get('total_usd', 0):,.0f} | "
+        f"{(f'{eq_pct:.1f}%' if eq_pct is not None else 'n/a')} |"
+    )
+    lines.append(
+        f"| Fixed income (Renta Fija FCI) | ${fi.get('total_usd', 0):,.0f} | "
+        f"{(f'{fi_pct:.1f}%' if fi_pct is not None else 'n/a')} |"
+    )
+    lines.append(
+        f"| Cash equivalent (Money Market + cash bruto) | "
+        f"${cash.get('total_usd', 0):,.0f} | "
+        f"{(f'{cash_pct:.1f}%' if cash_pct is not None else 'n/a')} |"
+    )
+
+    # Equity sleeve detail.
+    eq_items = equity.get("items") or []
+    if eq_items:
+        lines.append("")
+        lines.append(
+            f"### Equity sleeve detail (${equity.get('total_usd', 0):,.0f} USD = "
+            f"{(f'{eq_pct:.1f}%' if eq_pct is not None else 'n/a')} del patrimonio)"
+        )
+        lines.append(
+            "| Ticker | Rol | qty | avg_cost | mark-to-market | % del equity | % del patrimonio | P&L |"
+        )
+        lines.append(
+            "|--------|-----|----:|---------:|---------------:|-------------:|----------------:|----:|"
+        )
+        for it in eq_items:
+            ret = it.get("unrealized_return_pct")
+            ret_str = f"{ret:+.1f}%" if ret is not None else "n/a"
+            pct_eq = (
+                100.0 * it["mtm_usd"] / (equity.get("total_usd") or 1)
+                if equity.get("total_usd") else 0
+            )
+            lines.append(
+                f"| {it['ticker']} | {it.get('role') or '—'} | {it['qty']:g} | "
+                f"${it['avg_cost']:.2f} | ${it['mtm_usd']:,.0f} | "
+                f"{pct_eq:.1f}% | {(it.get('pct_of_wealth') or 0):.1f}% | {ret_str} |"
+            )
+        # Role buckets vs WEALTH (different from the equity-only aggregate).
+        roles = equity.get("role_buckets") or {}
+        if roles:
+            lines.append("")
+            lines.append("### Equity por rol (vs patrimonio total)")
+            for role, bucket in roles.items():
+                if not isinstance(bucket, Mapping):
+                    continue
+                pw = bucket.get("pct_of_wealth")
+                pe = bucket.get("pct_of_equity")
+                tickers = bucket.get("tickers") or []
+                lines.append(
+                    f"- **{role}**: ${bucket.get('mtm_usd', 0):,.0f} "
+                    f"({(f'{pw:.1f}%' if pw is not None else 'n/a')} del patrimonio "
+                    f"/ {(f'{pe:.1f}%' if pe is not None else 'n/a')} del equity sleeve) — "
+                    f"tickers: {', '.join(tickers) or '—'}"
+                )
+
+    # Fixed income detail.
+    fi_items = fi.get("items") or []
+    if fi_items:
+        lines.append("")
+        lines.append(
+            f"### Fixed income detail (${fi.get('total_usd', 0):,.0f} USD = "
+            f"{(f'{fi_pct:.1f}%' if fi_pct is not None else 'n/a')} del patrimonio)"
+        )
+        for it in fi_items:
+            lines.append(
+                f"- {it.get('description') or it.get('ticker')}: ${it['usd']:,.0f}"
+            )
+
+    # Cash detail.
+    mm_items = cash.get("items") or []
+    raw_cash = cash.get("raw_cash") or {}
+    has_raw_cash = any(
+        raw_cash.get(k)
+        for k in ("mep_usd", "cable_usd", "ars_usd_equivalent")
+    )
+    if mm_items or has_raw_cash:
+        lines.append("")
+        lines.append(
+            f"### Cash equivalent detail (${cash.get('total_usd', 0):,.0f} USD = "
+            f"{(f'{cash_pct:.1f}%' if cash_pct is not None else 'n/a')} del patrimonio)"
+        )
+        for it in mm_items:
+            lines.append(
+                f"- MM: {it.get('description') or it.get('ticker')}: ${it['usd']:,.0f}"
+            )
+        if raw_cash.get("mep_usd"):
+            lines.append(f"- Cash MEP: ${raw_cash['mep_usd']:,.0f}")
+        if raw_cash.get("cable_usd"):
+            lines.append(f"- Cash CABLE: ${raw_cash['cable_usd']:,.0f}")
+        if raw_cash.get("ars_usd_equivalent"):
+            lines.append(
+                f"- Cash ARS (equiv USD@MEP): "
+                f"${raw_cash['ars_usd_equivalent']:,.0f}"
+            )
+
+    # Top concentrations against TOTAL WEALTH.
+    top = snap.get("top_concentrations") or []
+    if top:
+        lines.append("")
+        lines.append("### Top concentraciones vs patrimonio total")
+        for c in top:
+            lines.append(
+                f"- {c['ticker']}: ${c['usd']:,.0f} = "
+                f"{(c.get('pct_of_wealth') or 0):.1f}% del patrimonio"
+            )
+
+    return "\n".join(lines)
+
+
 def _summarize_portfolio_aggregate(agg: Mapping[str, Any] | None) -> str:
+    """Equity-only role aggregate, kept for backward compat in the brief.
+
+    The wealth snapshot is the primary view; this remains as a secondary
+    block so the manager can still see "% of equity sleeve" easily for
+    role-gate reasoning per ticker (anchor / tactical / speculative).
+    """
     if not agg:
-        return "_(sin agregado de cartera disponible — corrida sin posiciones)_"
-    lines = ["## Agregado de cartera (cost-basis)"]
+        return ""
+    lines = ["## Equity sleeve — agregado por rol (cost-basis, dentro del sleeve)"]
     role_buckets = agg.get("role_buckets") or {}
     for role, bucket in role_buckets.items():
         if not isinstance(bucket, Mapping):
@@ -256,27 +408,13 @@ def _summarize_portfolio_aggregate(agg: Mapping[str, Any] | None) -> str:
         weight_str = f"{weight:.1f}%" if weight is not None else "?"
         ret_str = f"{ret:+.1f}%" if ret is not None else "n/a"
         lines.append(
-            f"- {role}: {weight_str} del libro, P&L medio {ret_str}, tickers: {', '.join(tickers) or '—'}"
+            f"- {role}: {weight_str} del **equity sleeve**, P&L medio {ret_str}, tickers: {', '.join(tickers) or '—'}"
         )
     if "max_single_weight_pct" in agg:
-        lines.append(f"- Concentración máxima en un ticker: {agg['max_single_weight_pct']:.1f}%")
-    return "\n".join(lines)
-
-
-def _summarize_liquidity(liq: Mapping[str, Any] | None) -> str:
-    if not liq:
-        return "_(sin snapshot de liquidez)_"
-    lines = ["## Liquidez disponible"]
-    if liq.get("total_deployable_usd") is not None:
-        lines.append(f"- Total desplegable: ${liq['total_deployable_usd']:,.0f} USD")
-    if liq.get("cash_mep_usd"):
-        lines.append(f"- Cash MEP: ${liq['cash_mep_usd']:,.0f} USD")
-    if liq.get("cash_cable_usd"):
-        lines.append(f"- Cash CABLE: ${liq['cash_cable_usd']:,.0f} USD")
-    if liq.get("total_money_market_usd"):
-        lines.append(f"- Money market: ${liq['total_money_market_usd']:,.0f} USD")
-    if liq.get("total_fixed_income_usd"):
-        lines.append(f"- Renta fija: ${liq['total_fixed_income_usd']:,.0f} USD")
+        lines.append(
+            f"- Concentración máxima dentro del equity sleeve: "
+            f"{agg['max_single_weight_pct']:.1f}%"
+        )
     return "\n".join(lines)
 
 
@@ -321,6 +459,7 @@ def create_portfolio_manager(llm, memory):
         results: Iterable[Any],
         portfolio_aggregate: Mapping[str, Any] | None = None,
         liquidity: Mapping[str, Any] | None = None,
+        wealth_snapshot: Mapping[str, Any] | None = None,
         trade_date: str | None = None,
     ) -> dict[str, Any]:
         results = list(results)
@@ -347,11 +486,23 @@ def create_portfolio_manager(llm, memory):
         except Exception:  # noqa: BLE001 — memory is auxiliary
             past_memory_str = ""
 
+        # Build a quick ticker→pct_of_wealth lookup for the per-ticker brief
+        # so the manager sees both lenses (% of equity sleeve, % of patrimony)
+        # without doing the math itself.
+        wealth_by_ticker: dict[str, float] = {}
+        if wealth_snapshot:
+            for it in (wealth_snapshot.get("equity") or {}).get("items") or []:
+                t = it.get("ticker")
+                pw = it.get("pct_of_wealth")
+                if t and pw is not None:
+                    wealth_by_ticker[t] = pw
+
         per_ticker_blocks = "\n\n".join(
-            _summarize_ticker_for_prompt(r) for r in ok_results
+            _summarize_ticker_for_prompt(r, pct_of_wealth=wealth_by_ticker.get(r.ticker))
+            for r in ok_results
         )
+        wealth_block = _summarize_wealth_snapshot(wealth_snapshot)
         agg_block = _summarize_portfolio_aggregate(portfolio_aggregate)
-        liq_block = _summarize_liquidity(liquidity)
 
         skipped_block = (
             f"\n\n**Tickers omitidos (error en Risk Judge):** {', '.join(skipped)}"
@@ -364,14 +515,15 @@ def create_portfolio_manager(llm, memory):
             else ""
         )
 
+        agg_section = ("\n\n" + agg_block) if agg_block else ""
+
         prompt = (
             _SYSTEM_FRAMEWORK
             + "\n\n---\n\n# Inputs del ciclo "
             + (trade_date or "")
             + "\n\n"
-            + agg_block
-            + "\n\n"
-            + liq_block
+            + wealth_block
+            + agg_section
             + memory_block
             + "\n\n## Dictámenes del Risk Judge per-ticker\n\n"
             + per_ticker_blocks

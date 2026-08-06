@@ -450,18 +450,25 @@ class TradingAgentsGraph:
     ) -> Dict[str, Any]:
         """Run the cross-ticker Portfolio Manager on a finished batch.
 
-        Recomputes the aggregate from ``holdings`` so the manager sees the
-        same book view that was injected into each Risk Judge. Returns the
-        synthesizer's dict (``narrative`` + metadata). Errors are caught
-        inside the synthesizer; this method never raises so the report
-        writer can still produce the markdown.
+        Builds the same equity-only ``portfolio_aggregate`` the per-ticker
+        Risk Judge already saw, plus a unified ``wealth_snapshot`` (equity
+        + fixed income + cash equivalent against TOTAL wealth) so the
+        manager applies its concentration ceilings against the right
+        denominator. Errors are caught inside the synthesizer — this method
+        never raises so the report writer still produces markdown.
         """
+        from tradingagents.agents.utils.wealth_snapshot import (
+            compute_wealth_snapshot,
+        )
+
         portfolio_agg = compute_portfolio_aggregate(holdings)
         agg_dict = portfolio_agg.to_dict() if portfolio_agg is not None else None
+        wealth = compute_wealth_snapshot(results, holdings, liquidity)
         return self.portfolio_manager(
             results,
             portfolio_aggregate=agg_dict,
             liquidity=liquidity,
+            wealth_snapshot=wealth,
             trade_date=trade_date,
         )
 

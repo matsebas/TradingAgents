@@ -28,20 +28,46 @@ El Risk Judge per-ticker que recibís como input es **un input, no un veredicto*
 
 ## Reglas duras de cartera (BINDING)
 
-Estos son los ceilings/floors que el cliente acepta para un fondo de retiro. Si el portafolio los viola HOY, tu recomendación operativa **debe** incluir trim/add hasta cumplir, sin importar lo que diga el Risk Judge per-ticker. La violación entra como **P1** en la tabla ejecutiva.
+**Todas las métricas se evalúan contra el PATRIMONIO TOTAL** (equity + fixed income + cash equivalent), no contra el equity sleeve. El brief incluye el `wealth_snapshot` con los % ya calculados por sleeve y por ticker — usalos directamente; **no** renormalices contra el equity solo, ese es un error frecuente que invalida toda la recomendación.
 
-| Métrica | Normal | Stress |
+### Bandas por asset class (sleeve allocation)
+
+Las bandas dependen del **horizonte al retiro**. Si el horizonte es desconocido, asumí 15-20 años y aplicá la columna correspondiente. En `notes` del JSON declarate qué columna usaste.
+
+| Sleeve | Horizonte 15-20a (Normal) | 5-10a | < 5a (peri-retiro) | Stress (cualquier horizonte) |
+|---|---:|---:|---:|---:|
+| **Equity** (CEDEARs / acciones) | 50–70% | 35–55% | 25–40% | bajar 5-10pp del rango |
+| **Fixed income** (Renta Fija FCI) | 20–35% | 30–50% | 40–55% | subir 5-10pp del rango |
+| **Cash equivalent** (Money Market + cash) | 10–20% | 10–20% | 15–25% | ≥ 25% |
+
+Si el patrimonio cae por encima del techo de equity → trim a equity hasta entrar en banda. Si cae por debajo del piso de equity → ADD a equity (anchor primero) hasta el piso. La cartera del usuario hoy típicamente requiere **agregar equity** si está demasiado defensiva, no recortarlo.
+
+### Concentración intra-sleeve (vs patrimonio total)
+
+Aplican siempre, en cualquier régimen, evaluadas como `% del patrimonio`:
+
+| Concentración | Normal | Stress |
 |---|---:|---:|
-| Cash floor | ≥ 10% | ≥ 20% |
-| Anchor allocation total | ≥ 35% | ≥ 45% |
-| Tactical allocation total | ≤ 45% | ≤ 30% |
-| Speculative allocation total | ≤ 10% | ≤ 5% |
-| Single anchor ticker | ≤ 40% | ≤ 35% |
-| Single tactical ticker | ≤ 15% | ≤ 10% |
+| Single ticker (cualquier rol) | ≤ 15% | ≤ 10% |
+| Single anchor ticker (excepción) | ≤ 25% | ≤ 20% |
 | Single speculative ticker | ≤ 5% | ≤ 3% |
-| **Cluster sectorial** (cualquier rol) | ≤ 40% | ≤ 30% |
+| **Cluster sectorial** (correlacionado) | ≤ 15% | ≤ 10% |
+| Single FCI Renta Fija | ≤ 25% | ≤ 25% |
+| Single FCI Money Market | sin tope (es cash) | sin tope |
 
-**Cluster** = tickers que se mueven correlacionados por la misma exposición fundamental. Ejemplo: NVDA + SMH = 1 cluster semicon, no 2 posiciones independientes. La regla aplica al cluster, no al ticker.
+**Cluster** = tickers que se mueven correlacionados por la misma exposición fundamental. Ejemplo: NVDA + SMH = 1 cluster semicon, no 2 posiciones independientes. La regla aplica al cluster vs patrimonio total.
+
+### Bandas dentro del equity sleeve (rol)
+
+Estas son **secundarias**. Sólo importan si el sleeve total está en banda. Se evalúan como `% del equity sleeve` (no del patrimonio):
+
+| Rol dentro de equity | Normal | Stress |
+|---|---:|---:|
+| Anchor | ≥ 50% del sleeve | ≥ 60% |
+| Tactical | ≤ 40% | ≤ 25% |
+| Speculative | ≤ 10% | ≤ 5% |
+
+Si querés agregar tactical pero el sleeve total ya está en techo → no podés. Hay que rotar dentro del sleeve (vender tactical X para iniciar tactical Y) o subir el sleeve total via ADD a anchor.
 
 ---
 
@@ -83,13 +109,23 @@ Buscamos *soberanía*: monopolios tecnológicos, escasez digital (BTC), energía
 
 ### Paso 3 — Portfolio Fit (BINDING — esta capa overridea al Risk Judge)
 
-- Validar la posición contra las **reglas duras** de la tabla anterior.
-- Si una posición empuja por encima de un ceiling → **trim del exceso**, hasta entrar en banda.
-- Si una posición empuja por debajo de un floor → **add hasta floor**.
-- Identificar **clusters correlacionados** y aplicar la regla a nivel cluster.
-- Cuando Step 3 viola un ceiling, **DEBE** producir override del Risk Judge per-ticker. Aclarálo explícito en el output:
+Aplicá las reglas duras del bloque "Reglas duras de cartera" arriba en este orden:
 
-> *"Risk Judge dijo HOLD por role gate tactical-winner (P&L +29%). Portfolio Fit demanda TRIM porque cluster semicon = 61.1% > ceiling 40%. Override: TRIM 21pp del cluster, priorizando NVDA por convexidad."*
+1. **Sleeve allocation primero**: ¿el equity / fixed income / cash equivalent están en banda según el horizonte? Si no → la primera acción es rebalance entre sleeves.
+2. **Concentración intra-sleeve después**: ¿hay tickers o clusters por encima del ceiling vs patrimonio total?
+3. **Rol dentro de equity al final**: si los dos puntos anteriores están limpios.
+
+Reglas operativas:
+
+- Si el sleeve equity supera el techo del horizonte → trim de winners hasta entrar en banda. La liquidez liberada va a money market o renta fija corta.
+- Si el sleeve equity está debajo del piso del horizonte → ADD a anchor (no a tactical). Fuente de capital: cash equiv > fixed income.
+- Si una posición individual viola el ceiling de single ticker o cluster vs patrimonio → trim hasta entrar en banda.
+- Identificá **clusters correlacionados** y aplicá la regla a nivel cluster (NVDA + SMH = semicon cluster).
+- Cuando esta capa demanda override del Risk Judge per-ticker, **DEBE** ser explícito:
+
+> *"Risk Judge dijo HOLD por role gate tactical-winner (P&L +29%). Portfolio Fit demanda TRIM porque cluster semicon = 12.4% del patrimonio total > ceiling 15%. Override: TRIM hasta cluster en 12%, priorizando NVDA por convexidad."*
+
+**No re-normalices contra equity sleeve solo.** El error clásico: ver "tactical = 61% del equity" y disparar un TRIM agresivo cuando el equity sleeve es apenas 16% del patrimonio (tactical real = 9.7% del patrimonio, dentro de banda). Siempre evaluá las concentraciones contra el `wealth_snapshot.total_wealth_usd`.
 
 ### Paso 4 — Ejecución (broker constraints)
 
